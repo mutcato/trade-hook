@@ -1,10 +1,13 @@
-from datetime import timedelta
 import uuid
+from datetime import timedelta
+
 from django.conf import settings
-from django.db import models, transaction
 from django.core.exceptions import ValidationError
+from django.db import models, transaction
 from django.utils import timezone
+
 # Create your models here.
+
 
 class Hook(models.Model):
     """A hook is a webhook that is used to receive data from the trading platform."""
@@ -41,18 +44,20 @@ class HookSet(models.Model):
         return self.name
 
 
-
 ACTION_CHOICES = [
     ("LONG", "Long"),
     ("SHORT", "Short"),
 ]
+
 
 class Trade(models.Model):
     uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     name = models.CharField(max_length=255)
     pair = models.CharField(max_length=10)
     action = models.CharField(max_length=10, choices=ACTION_CHOICES)
-    hookset = models.ForeignKey("HookSet", on_delete=models.CASCADE, related_name='trades')
+    hookset = models.ForeignKey(
+        "HookSet", on_delete=models.CASCADE, related_name="trades"
+    )
     is_triggered = models.BooleanField(default=False)
     triggered_at = models.DateTimeField(null=True, blank=True)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
@@ -66,7 +71,9 @@ class Trade(models.Model):
         assets = pair.split("/")
 
         if len(assets) != 2:
-            raise ValidationError("Invalid pair. Must be in the format of 'asset1/asset2'.")
+            raise ValidationError(
+                "Invalid pair. Must be in the format of 'asset1/asset2'."
+            )
 
         if len(assets[0]) < 2 or len(assets[1]) < 2:
             raise ValidationError("Invalid pair. Must be at least 2 characters long.")

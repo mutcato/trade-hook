@@ -13,16 +13,16 @@ class RegisterViewTests(APITestCase):
 
     @classmethod
     def setUpTestData(cls):
-        cls.url = reverse('authentication:register')
-        cls.existing_user = baker.make(User, email='existing@example.com')
+        cls.url = reverse("authentication:register")
+        cls.existing_user = baker.make(User, email="existing@example.com")
 
     def setUp(self):
         self.valid_data = {
-            'email': 'newuser@example.com',
-            'password': 'SecurePass123!',
-            'password_confirm': 'SecurePass123!',
-            'first_name': 'John',
-            'last_name': 'Doe',
+            "email": "newuser@example.com",
+            "password": "SecurePass123!",
+            "password_confirm": "SecurePass123!",
+            "first_name": "John",
+            "last_name": "Doe",
         }
 
     def test_register_success(self):
@@ -30,52 +30,52 @@ class RegisterViewTests(APITestCase):
         response = self.client.post(self.url, self.valid_data)
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        self.assertIn('access', response.data)
-        self.assertIn('refresh', response.data)
-        self.assertIn('user', response.data)
-        self.assertEqual(response.data['user']['email'], self.valid_data['email'])
-        self.assertTrue(User.objects.filter(email=self.valid_data['email']).exists())
+        self.assertIn("access", response.data)
+        self.assertIn("refresh", response.data)
+        self.assertIn("user", response.data)
+        self.assertEqual(response.data["user"]["email"], self.valid_data["email"])
+        self.assertTrue(User.objects.filter(email=self.valid_data["email"]).exists())
 
     def test_register_passwords_do_not_match(self):
         """Test registration fails when passwords don't match."""
-        self.valid_data['password_confirm'] = 'DifferentPass123!'
+        self.valid_data["password_confirm"] = "DifferentPass123!"
         response = self.client.post(self.url, self.valid_data)
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn('password_confirm', response.data)
+        self.assertIn("password_confirm", response.data)
 
     def test_register_weak_password(self):
         """Test registration fails with weak password."""
-        self.valid_data['password'] = '123'
-        self.valid_data['password_confirm'] = '123'
+        self.valid_data["password"] = "123"
+        self.valid_data["password_confirm"] = "123"
         response = self.client.post(self.url, self.valid_data)
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn('password', response.data)
+        self.assertIn("password", response.data)
 
     def test_register_duplicate_email(self):
         """Test registration fails with existing email."""
-        self.valid_data['email'] = 'existing@example.com'
+        self.valid_data["email"] = "existing@example.com"
         response = self.client.post(self.url, self.valid_data)
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn('email', response.data)
+        self.assertIn("email", response.data)
 
     def test_register_invalid_email(self):
         """Test registration fails with invalid email format."""
-        self.valid_data['email'] = 'invalid-email'
+        self.valid_data["email"] = "invalid-email"
         response = self.client.post(self.url, self.valid_data)
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn('email', response.data)
+        self.assertIn("email", response.data)
 
     def test_register_missing_required_fields(self):
         """Test registration fails when required fields are missing."""
         response = self.client.post(self.url, {})
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn('email', response.data)
-        self.assertIn('password', response.data)
+        self.assertIn("email", response.data)
+        self.assertIn("password", response.data)
 
 
 class LoginViewTests(APITestCase):
@@ -83,24 +83,24 @@ class LoginViewTests(APITestCase):
 
     @classmethod
     def setUpTestData(cls):
-        cls.url = reverse('authentication:login')
-        cls.password = 'TestPass123!'
+        cls.url = reverse("authentication:login")
+        cls.password = "TestPass123!"
         cls.user = User.objects.create_user(
-            email='testuser@example.com',
+            email="testuser@example.com",
             password=cls.password,
-            first_name='Test',
-            last_name='User',
+            first_name="Test",
+            last_name="User",
         )
         cls.inactive_user = User.objects.create_user(
-            email='inactive@example.com',
+            email="inactive@example.com",
             password=cls.password,
             is_active=False,
         )
 
     def setUp(self):
         self.valid_credentials = {
-            'email': 'testuser@example.com',
-            'password': self.password,
+            "email": "testuser@example.com",
+            "password": self.password,
         }
 
     def test_login_success(self):
@@ -108,31 +108,36 @@ class LoginViewTests(APITestCase):
         response = self.client.post(self.url, self.valid_credentials)
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertIn('access', response.data)
-        self.assertIn('refresh', response.data)
-        self.assertIn('user', response.data)
-        self.assertEqual(response.data['user']['email'], self.valid_credentials['email'])
+        self.assertIn("access", response.data)
+        self.assertIn("refresh", response.data)
+        self.assertIn("user", response.data)
+        self.assertEqual(
+            response.data["user"]["email"], self.valid_credentials["email"]
+        )
 
     def test_login_wrong_password(self):
         """Test login fails with wrong password."""
-        self.valid_credentials['password'] = 'WrongPassword123!'
+        self.valid_credentials["password"] = "WrongPassword123!"
         response = self.client.post(self.url, self.valid_credentials)
 
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
     def test_login_nonexistent_user(self):
         """Test login fails with non-existent email."""
-        self.valid_credentials['email'] = 'nonexistent@example.com'
+        self.valid_credentials["email"] = "nonexistent@example.com"
         response = self.client.post(self.url, self.valid_credentials)
 
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
     def test_login_inactive_user(self):
         """Test login fails for inactive user."""
-        response = self.client.post(self.url, {
-            'email': 'inactive@example.com',
-            'password': self.password,
-        })
+        response = self.client.post(
+            self.url,
+            {
+                "email": "inactive@example.com",
+                "password": self.password,
+            },
+        )
 
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
@@ -148,30 +153,32 @@ class LogoutViewTests(APITestCase):
 
     @classmethod
     def setUpTestData(cls):
-        cls.url = reverse('authentication:logout')
+        cls.url = reverse("authentication:logout")
         cls.user = baker.make(User)
 
     def setUp(self):
         self.refresh = RefreshToken.for_user(self.user)
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.refresh.access_token}')
+        self.client.credentials(
+            HTTP_AUTHORIZATION=f"Bearer {self.refresh.access_token}"
+        )
 
     def test_logout_success(self):
         """Test successful logout blacklists refresh token."""
-        response = self.client.post(self.url, {'refresh': str(self.refresh)})
+        response = self.client.post(self.url, {"refresh": str(self.refresh)})
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data['detail'], 'Successfully logged out.')
+        self.assertEqual(response.data["detail"], "Successfully logged out.")
 
     def test_logout_invalid_token(self):
         """Test logout with invalid token returns error."""
-        response = self.client.post(self.url, {'refresh': 'invalid-token'})
+        response = self.client.post(self.url, {"refresh": "invalid-token"})
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_logout_unauthenticated(self):
         """Test logout requires authentication."""
         self.client.credentials()
-        response = self.client.post(self.url, {'refresh': str(self.refresh)})
+        response = self.client.post(self.url, {"refresh": str(self.refresh)})
 
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
@@ -181,7 +188,7 @@ class TokenRefreshViewTests(APITestCase):
 
     @classmethod
     def setUpTestData(cls):
-        cls.url = reverse('authentication:token_refresh')
+        cls.url = reverse("authentication:token_refresh")
         cls.user = baker.make(User)
 
     def setUp(self):
@@ -189,14 +196,14 @@ class TokenRefreshViewTests(APITestCase):
 
     def test_refresh_token_success(self):
         """Test successful token refresh returns new access token."""
-        response = self.client.post(self.url, {'refresh': str(self.refresh)})
+        response = self.client.post(self.url, {"refresh": str(self.refresh)})
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertIn('access', response.data)
+        self.assertIn("access", response.data)
 
     def test_refresh_token_invalid(self):
         """Test refresh fails with invalid token."""
-        response = self.client.post(self.url, {'refresh': 'invalid-token'})
+        response = self.client.post(self.url, {"refresh": "invalid-token"})
 
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
@@ -212,26 +219,28 @@ class ProfileViewTests(APITestCase):
 
     @classmethod
     def setUpTestData(cls):
-        cls.url = reverse('authentication:profile')
+        cls.url = reverse("authentication:profile")
         cls.user = baker.make(
             User,
-            email='profile@example.com',
-            first_name='Original',
-            last_name='Name',
+            email="profile@example.com",
+            first_name="Original",
+            last_name="Name",
         )
 
     def setUp(self):
         self.refresh = RefreshToken.for_user(self.user)
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.refresh.access_token}')
+        self.client.credentials(
+            HTTP_AUTHORIZATION=f"Bearer {self.refresh.access_token}"
+        )
 
     def test_get_profile_success(self):
         """Test retrieving user profile."""
         response = self.client.get(self.url)
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data['email'], self.user.email)
-        self.assertEqual(response.data['first_name'], self.user.first_name)
-        self.assertEqual(response.data['last_name'], self.user.last_name)
+        self.assertEqual(response.data["email"], self.user.email)
+        self.assertEqual(response.data["first_name"], self.user.first_name)
+        self.assertEqual(response.data["last_name"], self.user.last_name)
 
     def test_get_profile_unauthenticated(self):
         """Test profile access requires authentication."""
@@ -242,30 +251,30 @@ class ProfileViewTests(APITestCase):
 
     def test_update_profile_put(self):
         """Test full profile update with PUT."""
-        data = {'first_name': 'Updated', 'last_name': 'User'}
+        data = {"first_name": "Updated", "last_name": "User"}
         response = self.client.put(self.url, data)
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data['first_name'], 'Updated')
-        self.assertEqual(response.data['last_name'], 'User')
+        self.assertEqual(response.data["first_name"], "Updated")
+        self.assertEqual(response.data["last_name"], "User")
 
     def test_update_profile_patch(self):
         """Test partial profile update with PATCH."""
-        data = {'first_name': 'Patched'}
+        data = {"first_name": "Patched"}
         response = self.client.patch(self.url, data)
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data['first_name'], 'Patched')
-        self.assertEqual(response.data['last_name'], self.user.last_name)
+        self.assertEqual(response.data["first_name"], "Patched")
+        self.assertEqual(response.data["last_name"], self.user.last_name)
 
     def test_profile_email_is_readonly(self):
         """Test that email cannot be updated via profile."""
         original_email = self.user.email
-        data = {'email': 'newemail@example.com', 'first_name': 'Test'}
+        data = {"email": "newemail@example.com", "first_name": "Test"}
         response = self.client.patch(self.url, data)
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data['email'], original_email)
+        self.assertEqual(response.data["email"], original_email)
 
 
 class ChangePasswordViewTests(APITestCase):
@@ -273,21 +282,23 @@ class ChangePasswordViewTests(APITestCase):
 
     @classmethod
     def setUpTestData(cls):
-        cls.url = reverse('authentication:change_password')
-        cls.old_password = 'OldPass123!'
-        cls.new_password = 'NewPass456!'
+        cls.url = reverse("authentication:change_password")
+        cls.old_password = "OldPass123!"
+        cls.new_password = "NewPass456!"
         cls.user = User.objects.create_user(
-            email='changepass@example.com',
+            email="changepass@example.com",
             password=cls.old_password,
         )
 
     def setUp(self):
         self.refresh = RefreshToken.for_user(self.user)
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.refresh.access_token}')
+        self.client.credentials(
+            HTTP_AUTHORIZATION=f"Bearer {self.refresh.access_token}"
+        )
         self.valid_data = {
-            'old_password': self.old_password,
-            'new_password': self.new_password,
-            'new_password_confirm': self.new_password,
+            "old_password": self.old_password,
+            "new_password": self.new_password,
+            "new_password_confirm": self.new_password,
         }
 
     def test_change_password_success(self):
@@ -300,28 +311,28 @@ class ChangePasswordViewTests(APITestCase):
 
     def test_change_password_wrong_old_password(self):
         """Test password change fails with wrong old password."""
-        self.valid_data['old_password'] = 'WrongOldPass123!'
+        self.valid_data["old_password"] = "WrongOldPass123!"
         response = self.client.post(self.url, self.valid_data)
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn('old_password', response.data)
+        self.assertIn("old_password", response.data)
 
     def test_change_password_mismatch(self):
         """Test password change fails when new passwords don't match."""
-        self.valid_data['new_password_confirm'] = 'DifferentPass789!'
+        self.valid_data["new_password_confirm"] = "DifferentPass789!"
         response = self.client.post(self.url, self.valid_data)
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn('new_password_confirm', response.data)
+        self.assertIn("new_password_confirm", response.data)
 
     def test_change_password_weak(self):
         """Test password change fails with weak new password."""
-        self.valid_data['new_password'] = '123'
-        self.valid_data['new_password_confirm'] = '123'
+        self.valid_data["new_password"] = "123"
+        self.valid_data["new_password_confirm"] = "123"
         response = self.client.post(self.url, self.valid_data)
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn('new_password', response.data)
+        self.assertIn("new_password", response.data)
 
     def test_change_password_unauthenticated(self):
         """Test password change requires authentication."""

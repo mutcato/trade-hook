@@ -29,11 +29,14 @@ class RegisterView(generics.CreateAPIView):
         user = serializer.save()
 
         refresh = RefreshToken.for_user(user)
-        return Response({
-            'user': UserSerializer(user).data,
-            'refresh': str(refresh),
-            'access': str(refresh.access_token),
-        }, status=status.HTTP_201_CREATED)
+        return Response(
+            {
+                "user": UserSerializer(user).data,
+                "refresh": str(refresh),
+                "access": str(refresh.access_token),
+            },
+            status=status.HTTP_201_CREATED,
+        )
 
 
 class LoginView(TokenObtainPairView):
@@ -49,18 +52,16 @@ class LogoutView(APIView):
 
     def post(self, request):
         try:
-            refresh_token = request.data.get('refresh')
+            refresh_token = request.data.get("refresh")
             if refresh_token:
                 token = RefreshToken(refresh_token)
                 token.blacklist()
             return Response(
-                {'detail': 'Successfully logged out.'},
-                status=status.HTTP_200_OK
+                {"detail": "Successfully logged out."}, status=status.HTTP_200_OK
             )
         except Exception:
             return Response(
-                {'detail': 'Invalid token.'},
-                status=status.HTTP_400_BAD_REQUEST
+                {"detail": "Invalid token."}, status=status.HTTP_400_BAD_REQUEST
             )
 
 
@@ -81,15 +82,13 @@ class ChangePasswordView(APIView):
 
     def post(self, request):
         serializer = ChangePasswordSerializer(
-            data=request.data,
-            context={'request': request}
+            data=request.data, context={"request": request}
         )
         serializer.is_valid(raise_exception=True)
 
-        request.user.set_password(serializer.validated_data['new_password'])
+        request.user.set_password(serializer.validated_data["new_password"])
         request.user.save()
 
         return Response(
-            {'detail': 'Password changed successfully.'},
-            status=status.HTTP_200_OK
+            {"detail": "Password changed successfully."}, status=status.HTTP_200_OK
         )

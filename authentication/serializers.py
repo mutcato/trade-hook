@@ -11,8 +11,8 @@ class UserSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ['id', 'email', 'first_name', 'last_name', 'date_joined', 'updated_at']
-        read_only_fields = ['id', 'email', 'date_joined', 'updated_at']
+        fields = ["id", "email", "first_name", "last_name", "date_joined", "updated_at"]
+        read_only_fields = ["id", "email", "date_joined", "updated_at"]
 
 
 class RegisterSerializer(serializers.ModelSerializer):
@@ -22,27 +22,25 @@ class RegisterSerializer(serializers.ModelSerializer):
         write_only=True,
         required=True,
         validators=[validate_password],
-        style={'input_type': 'password'}
+        style={"input_type": "password"},
     )
     password_confirm = serializers.CharField(
-        write_only=True,
-        required=True,
-        style={'input_type': 'password'}
+        write_only=True, required=True, style={"input_type": "password"}
     )
 
     class Meta:
         model = User
-        fields = ['email', 'password', 'password_confirm', 'first_name', 'last_name']
+        fields = ["email", "password", "password_confirm", "first_name", "last_name"]
 
     def validate(self, attrs):
-        if attrs['password'] != attrs['password_confirm']:
-            raise serializers.ValidationError({
-                'password_confirm': 'Password fields do not match.'
-            })
+        if attrs["password"] != attrs["password_confirm"]:
+            raise serializers.ValidationError(
+                {"password_confirm": "Password fields do not match."}
+            )
         return attrs
 
     def create(self, validated_data):
-        validated_data.pop('password_confirm')
+        validated_data.pop("password_confirm")
         user = User.objects.create_user(**validated_data)
         return user
 
@@ -52,7 +50,7 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
 
     def validate(self, attrs):
         data = super().validate(attrs)
-        data['user'] = UserSerializer(self.user).data
+        data["user"] = UserSerializer(self.user).data
         return data
 
 
@@ -60,28 +58,24 @@ class ChangePasswordSerializer(serializers.Serializer):
     """Serializer for password change."""
 
     old_password = serializers.CharField(
-        required=True,
-        style={'input_type': 'password'}
+        required=True, style={"input_type": "password"}
     )
     new_password = serializers.CharField(
-        required=True,
-        validators=[validate_password],
-        style={'input_type': 'password'}
+        required=True, validators=[validate_password], style={"input_type": "password"}
     )
     new_password_confirm = serializers.CharField(
-        required=True,
-        style={'input_type': 'password'}
+        required=True, style={"input_type": "password"}
     )
 
     def validate(self, attrs):
-        if attrs['new_password'] != attrs['new_password_confirm']:
-            raise serializers.ValidationError({
-                'new_password_confirm': 'Password fields do not match.'
-            })
+        if attrs["new_password"] != attrs["new_password_confirm"]:
+            raise serializers.ValidationError(
+                {"new_password_confirm": "Password fields do not match."}
+            )
         return attrs
 
     def validate_old_password(self, value):
-        user = self.context['request'].user
+        user = self.context["request"].user
         if not user.check_password(value):
-            raise serializers.ValidationError('Old password is incorrect.')
+            raise serializers.ValidationError("Old password is incorrect.")
         return value

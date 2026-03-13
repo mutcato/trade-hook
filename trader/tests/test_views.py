@@ -25,7 +25,7 @@ class HookSetViewSetTests(APITestCase):
         cls.other_user = baker.make(User)
         cls.hookset = baker.make(
             HookSet,
-            name='Test HookSet',
+            name="Test HookSet",
             timewindow=DEFAULT_TIMEWINDOW,
             created_by=cls.user,
         )
@@ -34,12 +34,12 @@ class HookSetViewSetTests(APITestCase):
             timewindow=DEFAULT_TIMEWINDOW,
             created_by=cls.other_user,
         )
-        cls.list_url = reverse('trader:hookset-list')
-        cls.detail_url = reverse('trader:hookset-detail', kwargs={'pk': cls.hookset.pk})
+        cls.list_url = reverse("trader:hookset-list")
+        cls.detail_url = reverse("trader:hookset-detail", kwargs={"pk": cls.hookset.pk})
 
     def setUp(self):
         refresh = RefreshToken.for_user(self.user)
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {refresh.access_token}')
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {refresh.access_token}")
 
     def test_list_hooksets(self):
         """Test listing all hooksets."""
@@ -61,29 +61,47 @@ class HookSetViewSetTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         # Check all HookSetSerializer fields exist
-        expected_fields = ['id', 'name', 'timewindow', 'hook_set', 'created_by', 'created_at', 'updated_at']
+        expected_fields = [
+            "id",
+            "name",
+            "timewindow",
+            "hook_set",
+            "created_by",
+            "created_at",
+            "updated_at",
+        ]
         for field in expected_fields:
-            self.assertIn(field, response.data, f"Field '{field}' not found in response")
+            self.assertIn(
+                field, response.data, f"Field '{field}' not found in response"
+            )
         # Verify all field values match model
-        self.assertEqual(response.data['id'], self.hookset.pk)
-        self.assertEqual(response.data['name'], self.hookset.name)
-        self.assertEqual(response.data['timewindow'], self.hookset.timewindow.strftime('%H:%M:%S'))
-        self.assertIsInstance(response.data['hook_set'], list)
-        self.assertEqual(response.data['created_by']['id'], self.hookset.created_by.pk)
-        self.assertEqual(response.data['created_at'], self.hookset.created_at.strftime('%Y-%m-%dT%H:%M:%S.%f') + 'Z')
-        self.assertEqual(response.data['updated_at'], self.hookset.updated_at.strftime('%Y-%m-%dT%H:%M:%S.%f') + 'Z')
+        self.assertEqual(response.data["id"], self.hookset.pk)
+        self.assertEqual(response.data["name"], self.hookset.name)
+        self.assertEqual(
+            response.data["timewindow"], self.hookset.timewindow.strftime("%H:%M:%S")
+        )
+        self.assertIsInstance(response.data["hook_set"], list)
+        self.assertEqual(response.data["created_by"]["id"], self.hookset.created_by.pk)
+        self.assertEqual(
+            response.data["created_at"],
+            self.hookset.created_at.strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z",
+        )
+        self.assertEqual(
+            response.data["updated_at"],
+            self.hookset.updated_at.strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z",
+        )
 
     def test_create_hookset(self):
         """Test creating a new hookset."""
         data = {
-            'name': 'New HookSet',
-            'timewindow': '02:00:00',
+            "name": "New HookSet",
+            "timewindow": "02:00:00",
         }
         response = self.client.post(self.list_url, data)
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        self.assertEqual(response.data['name'], 'New HookSet')
-        self.assertTrue(HookSet.objects.filter(name='New HookSet').exists())
+        self.assertEqual(response.data["name"], "New HookSet")
+        self.assertTrue(HookSet.objects.filter(name="New HookSet").exists())
 
     def test_create_hookset_empty_data(self):
         """Test creating a hookset with empty data fails."""
@@ -94,23 +112,23 @@ class HookSetViewSetTests(APITestCase):
     def test_update_hookset_put(self):
         """Test full update of hookset."""
         data = {
-            'name': 'Updated HookSet',
-            'timewindow': '03:00:00',
+            "name": "Updated HookSet",
+            "timewindow": "03:00:00",
         }
         response = self.client.put(self.detail_url, data)
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.hookset.refresh_from_db()
-        self.assertEqual(self.hookset.name, 'Updated HookSet')
+        self.assertEqual(self.hookset.name, "Updated HookSet")
 
     def test_update_hookset_patch(self):
         """Test partial update of hookset."""
-        data = {'name': 'Patched HookSet'}
+        data = {"name": "Patched HookSet"}
         response = self.client.patch(self.detail_url, data)
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.hookset.refresh_from_db()
-        self.assertEqual(self.hookset.name, 'Patched HookSet')
+        self.assertEqual(self.hookset.name, "Patched HookSet")
 
     def test_delete_hookset(self):
         """Test deleting a hookset."""
@@ -121,7 +139,7 @@ class HookSetViewSetTests(APITestCase):
 
     def test_retrieve_nonexistent_hookset(self):
         """Test retrieving a non-existent hookset returns 404."""
-        url = reverse('trader:hookset-detail', kwargs={'pk': 99999})
+        url = reverse("trader:hookset-detail", kwargs={"pk": 99999})
         response = self.client.get(url)
 
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
@@ -146,17 +164,17 @@ class HookViewSetTests(APITestCase):
         )
         cls.hook = baker.make(
             Hook,
-            name='Test Hook',
+            name="Test Hook",
             hook_set=cls.hookset,
             created_by=cls.user,
             is_triggered=False,
         )
-        cls.list_url = reverse('trader:hook-list')
-        cls.detail_url = reverse('trader:hook-detail', kwargs={'pk': cls.hook.pk})
+        cls.list_url = reverse("trader:hook-list")
+        cls.detail_url = reverse("trader:hook-detail", kwargs={"pk": cls.hook.pk})
 
     def setUp(self):
         refresh = RefreshToken.for_user(self.user)
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {refresh.access_token}')
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {refresh.access_token}")
 
     def test_list_hooks(self):
         """Test listing all hooks."""
@@ -178,22 +196,38 @@ class HookViewSetTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         # Check all HookSerializer fields exist
-        expected_fields = ['id', 'hook_set', 'is_triggered', 'triggered_at', 'created_by', 'created_at', 'updated_at']
+        expected_fields = [
+            "id",
+            "hook_set",
+            "is_triggered",
+            "triggered_at",
+            "created_by",
+            "created_at",
+            "updated_at",
+        ]
         for field in expected_fields:
-            self.assertIn(field, response.data, f"Field '{field}' not found in response")
+            self.assertIn(
+                field, response.data, f"Field '{field}' not found in response"
+            )
         # Verify all field values match model
-        self.assertEqual(response.data['id'], self.hook.pk)
-        self.assertEqual(response.data['hook_set'], self.hook.hook_set.pk)
-        self.assertEqual(response.data['is_triggered'], self.hook.is_triggered)
-        self.assertEqual(response.data['triggered_at'], self.hook.triggered_at)
-        self.assertEqual(response.data['created_by']['id'], self.hook.created_by.pk)
-        self.assertEqual(response.data['created_at'], self.hook.created_at.strftime('%Y-%m-%dT%H:%M:%S.%f') + 'Z')
-        self.assertEqual(response.data['updated_at'], self.hook.updated_at.strftime('%Y-%m-%dT%H:%M:%S.%f') + 'Z')
+        self.assertEqual(response.data["id"], self.hook.pk)
+        self.assertEqual(response.data["hook_set"], self.hook.hook_set.pk)
+        self.assertEqual(response.data["is_triggered"], self.hook.is_triggered)
+        self.assertEqual(response.data["triggered_at"], self.hook.triggered_at)
+        self.assertEqual(response.data["created_by"]["id"], self.hook.created_by.pk)
+        self.assertEqual(
+            response.data["created_at"],
+            self.hook.created_at.strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z",
+        )
+        self.assertEqual(
+            response.data["updated_at"],
+            self.hook.updated_at.strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z",
+        )
 
     def test_create_hook(self):
         """Test creating a new hook."""
         data = {
-            'hook_set': self.hookset.pk,
+            "hook_set": self.hookset.pk,
         }
         response = self.client.post(self.list_url, data)
 
@@ -203,7 +237,7 @@ class HookViewSetTests(APITestCase):
     def test_create_hook_invalid_hookset(self):
         """Test creating a hook with invalid hookset fails."""
         data = {
-            'hook_set': 99999,
+            "hook_set": 99999,
         }
         response = self.client.post(self.list_url, data)
 
@@ -218,7 +252,7 @@ class HookViewSetTests(APITestCase):
 
     def test_retrieve_nonexistent_hook(self):
         """Test retrieving a non-existent hook returns 404."""
-        url = reverse('trader:hook-detail', kwargs={'pk': 99999})
+        url = reverse("trader:hook-detail", kwargs={"pk": 99999})
         response = self.client.get(url)
 
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
@@ -238,27 +272,27 @@ class HookTriggerActionTests(APITestCase):
 
     def setUp(self):
         refresh = RefreshToken.for_user(self.user)
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {refresh.access_token}')
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {refresh.access_token}")
         # Create fresh hooks for each test
         self.hook1 = baker.make(
             Hook,
-            name='Hook 1',
+            name="Hook 1",
             hook_set=self.hookset,
             created_by=self.user,
             is_triggered=False,
         )
         self.hook2 = baker.make(
             Hook,
-            name='Hook 2',
+            name="Hook 2",
             hook_set=self.hookset,
             created_by=self.user,
             is_triggered=False,
         )
         self.trade = baker.make(
             Trade,
-            name='Test Trade',
-            pair='BTC/USD',
-            action='LONG',
+            name="Test Trade",
+            pair="BTC/USD",
+            action="LONG",
             hookset=self.hookset,
             created_by=self.user,
             is_triggered=False,
@@ -266,15 +300,15 @@ class HookTriggerActionTests(APITestCase):
 
     def test_trigger_hook_success(self):
         """Test triggering a hook returns 200."""
-        url = reverse('trader:hook-trigger', kwargs={'pk': self.hook1.pk})
+        url = reverse("trader:hook-trigger", kwargs={"pk": self.hook1.pk})
         response = self.client.post(url, {})
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertIn('triggered successfully', response.data['detail'])
+        self.assertIn("triggered successfully", response.data["detail"])
 
     def test_trigger_hook_sets_triggered_flag(self):
         """Test triggering a hook sets is_triggered to True."""
-        url = reverse('trader:hook-trigger', kwargs={'pk': self.hook1.pk})
+        url = reverse("trader:hook-trigger", kwargs={"pk": self.hook1.pk})
         self.client.post(url, {})
 
         self.hook1.refresh_from_db()
@@ -284,14 +318,14 @@ class HookTriggerActionTests(APITestCase):
     def test_trigger_hook_unauthenticated(self):
         """Test triggering a hook requires authentication."""
         self.client.credentials()
-        url = reverse('trader:hook-trigger', kwargs={'pk': self.hook1.pk})
+        url = reverse("trader:hook-trigger", kwargs={"pk": self.hook1.pk})
         response = self.client.post(url, {})
 
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
     def test_trigger_nonexistent_hook(self):
         """Test triggering a non-existent hook returns 404."""
-        url = reverse('trader:hook-trigger', kwargs={'pk': 99999})
+        url = reverse("trader:hook-trigger", kwargs={"pk": 99999})
         response = self.client.post(url, {})
 
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
@@ -299,7 +333,7 @@ class HookTriggerActionTests(APITestCase):
     def test_trigger_partial_hooks_does_not_trigger_trades(self):
         """Test that triggering only some hooks does not trigger trades."""
         # Only trigger hook1, leave hook2 untriggered
-        url = reverse('trader:hook-trigger', kwargs={'pk': self.hook1.pk})
+        url = reverse("trader:hook-trigger", kwargs={"pk": self.hook1.pk})
         self.client.post(url, {})
 
         self.trade.refresh_from_db()
@@ -313,7 +347,7 @@ class HookTriggerActionTests(APITestCase):
         self.hook1.save()
 
         # Trigger hook2
-        url = reverse('trader:hook-trigger', kwargs={'pk': self.hook2.pk})
+        url = reverse("trader:hook-trigger", kwargs={"pk": self.hook2.pk})
         self.client.post(url, {})
 
         self.trade.refresh_from_db()
@@ -333,18 +367,18 @@ class TradeViewSetTests(APITestCase):
         )
         cls.trade = baker.make(
             Trade,
-            name='Test Trade',
-            pair='BTC/USD',
-            action='LONG',
+            name="Test Trade",
+            pair="BTC/USD",
+            action="LONG",
             hookset=cls.hookset,
             created_by=cls.user,
         )
-        cls.list_url = reverse('trader:trade-list')
-        cls.detail_url = reverse('trader:trade-detail', kwargs={'pk': cls.trade.pk})
+        cls.list_url = reverse("trader:trade-list")
+        cls.detail_url = reverse("trader:trade-detail", kwargs={"pk": cls.trade.pk})
 
     def setUp(self):
         refresh = RefreshToken.for_user(self.user)
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {refresh.access_token}')
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {refresh.access_token}")
 
     def test_list_trades(self):
         """Test listing all trades."""
@@ -366,55 +400,74 @@ class TradeViewSetTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         # Check all TradeSerializer fields exist
-        expected_fields = ['id', 'name', 'pair', 'action', 'hookset', 'is_triggered', 'triggered_at', 'created_by', 'created_at', 'updated_at']
+        expected_fields = [
+            "id",
+            "name",
+            "pair",
+            "action",
+            "hookset",
+            "is_triggered",
+            "triggered_at",
+            "created_by",
+            "created_at",
+            "updated_at",
+        ]
         for field in expected_fields:
-            self.assertIn(field, response.data, f"Field '{field}' not found in response")
+            self.assertIn(
+                field, response.data, f"Field '{field}' not found in response"
+            )
         # Verify all field values match model
-        self.assertEqual(response.data['id'], self.trade.pk)
-        self.assertEqual(response.data['name'], self.trade.name)
-        self.assertEqual(response.data['pair'], self.trade.pair)
-        self.assertEqual(response.data['action'], self.trade.action)
-        self.assertEqual(response.data['hookset']['id'], self.trade.hookset.pk)
-        self.assertEqual(response.data['is_triggered'], self.trade.is_triggered)
-        self.assertEqual(response.data['triggered_at'], self.trade.triggered_at)
-        self.assertEqual(response.data['created_by']['id'], self.trade.created_by.pk)
-        self.assertEqual(response.data['created_at'], self.trade.created_at.strftime('%Y-%m-%dT%H:%M:%S.%f') + 'Z')
-        self.assertEqual(response.data['updated_at'], self.trade.updated_at.strftime('%Y-%m-%dT%H:%M:%S.%f') + 'Z')
+        self.assertEqual(response.data["id"], self.trade.pk)
+        self.assertEqual(response.data["name"], self.trade.name)
+        self.assertEqual(response.data["pair"], self.trade.pair)
+        self.assertEqual(response.data["action"], self.trade.action)
+        self.assertEqual(response.data["hookset"]["id"], self.trade.hookset.pk)
+        self.assertEqual(response.data["is_triggered"], self.trade.is_triggered)
+        self.assertEqual(response.data["triggered_at"], self.trade.triggered_at)
+        self.assertEqual(response.data["created_by"]["id"], self.trade.created_by.pk)
+        self.assertEqual(
+            response.data["created_at"],
+            self.trade.created_at.strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z",
+        )
+        self.assertEqual(
+            response.data["updated_at"],
+            self.trade.updated_at.strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z",
+        )
 
     def test_create_trade_long(self):
         """Test creating a new long trade."""
         data = {
-            'name': 'New Long Trade',
-            'pair': 'ETH/USD',
-            'action': 'LONG',
-            'hookset': self.hookset.pk,
+            "name": "New Long Trade",
+            "pair": "ETH/USD",
+            "action": "LONG",
+            "hookset": self.hookset.pk,
         }
         response = self.client.post(self.list_url, data)
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        self.assertEqual(response.data['name'], 'New Long Trade')
-        self.assertEqual(response.data['action'], 'LONG')
+        self.assertEqual(response.data["name"], "New Long Trade")
+        self.assertEqual(response.data["action"], "LONG")
 
     def test_create_trade_short(self):
         """Test creating a new short trade."""
         data = {
-            'name': 'New Short Trade',
-            'pair': 'ETH/USD',
-            'action': 'SHORT',
-            'hookset': self.hookset.pk,
+            "name": "New Short Trade",
+            "pair": "ETH/USD",
+            "action": "SHORT",
+            "hookset": self.hookset.pk,
         }
         response = self.client.post(self.list_url, data)
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        self.assertEqual(response.data['action'], 'SHORT')
+        self.assertEqual(response.data["action"], "SHORT")
 
     def test_create_trade_invalid_action(self):
         """Test creating a trade with invalid action fails."""
         data = {
-            'name': 'Invalid Trade',
-            'pair': 'BTC/USD',
-            'action': 'INVALID',
-            'hookset': self.hookset.pk,
+            "name": "Invalid Trade",
+            "pair": "BTC/USD",
+            "action": "INVALID",
+            "hookset": self.hookset.pk,
         }
         response = self.client.post(self.list_url, data)
 
@@ -422,19 +475,19 @@ class TradeViewSetTests(APITestCase):
 
     def test_create_trade_missing_required_fields(self):
         """Test creating a trade without required fields fails."""
-        data = {'name': 'Incomplete Trade'}
+        data = {"name": "Incomplete Trade"}
         response = self.client.post(self.list_url, data)
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_update_trade_patch(self):
         """Test partial update of trade."""
-        data = {'name': 'Patched Trade'}
+        data = {"name": "Patched Trade"}
         response = self.client.patch(self.detail_url, data)
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.trade.refresh_from_db()
-        self.assertEqual(self.trade.name, 'Patched Trade')
+        self.assertEqual(self.trade.name, "Patched Trade")
 
     def test_delete_trade(self):
         """Test deleting a trade."""
@@ -445,7 +498,7 @@ class TradeViewSetTests(APITestCase):
 
     def test_retrieve_nonexistent_trade(self):
         """Test retrieving a non-existent trade returns 404."""
-        url = reverse('trader:trade-detail', kwargs={'pk': 99999})
+        url = reverse("trader:trade-detail", kwargs={"pk": 99999})
         response = self.client.get(url)
 
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
