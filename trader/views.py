@@ -27,7 +27,7 @@ class HookSetViewSet(viewsets.ModelViewSet):
 
 
 class HookViewSet(viewsets.ModelViewSet):
-    queryset = Hook.objects.select_related("hook_set")
+    queryset = Hook.objects.select_related("hookset")
 
     def get_serializer_class(self):
         if self.action in ["create", "update", "partial_update"]:
@@ -36,11 +36,11 @@ class HookViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["post"])
     def trigger(self, request, pk=None):
-        hook = self.queryset.get(pk=pk)
+        hook = self.get_object()
         hook.trigger()
 
         # Convert TimeField to timedelta for comparison
-        timewindow = hook.hook_set.timewindow
+        timewindow = hook.hookset.timewindow
         window_delta = timedelta(
             hours=timewindow.hour, minutes=timewindow.minute, seconds=timewindow.second
         )
@@ -48,14 +48,14 @@ class HookViewSet(viewsets.ModelViewSet):
 
         # Check if any sibling hook is not triggered or expired (using ORM)
         invalid_sibling = (
-            Hook.objects.filter(hook_set=hook.hook_set)
+            Hook.objects.filter(hookset=hook.hookset)
             .exclude(id=hook.id)
             .filter(Q(is_triggered=False) | Q(triggered_at__lt=cutoff_time))
         )
 
         # If all siblings are valid, bulk trigger untriggered trades
         if not invalid_sibling.exists():
-            trades = Trade.objects.filter(hookset=hook.hook_set, is_triggered=False)
+            trades = Trade.objects.filter(hookset=hook.hookset, is_triggered=False)
             for trade in trades:
                 trade.trigger()
 

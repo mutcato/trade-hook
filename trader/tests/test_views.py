@@ -65,7 +65,6 @@ class HookSetViewSetTests(APITestCase):
             "id",
             "name",
             "timewindow",
-            "hook_set",
             "created_by",
             "created_at",
             "updated_at",
@@ -80,7 +79,6 @@ class HookSetViewSetTests(APITestCase):
         self.assertEqual(
             response.data["timewindow"], self.hookset.timewindow.strftime("%H:%M:%S")
         )
-        self.assertIsInstance(response.data["hook_set"], list)
         self.assertEqual(response.data["created_by"]["id"], self.hookset.created_by.pk)
         self.assertEqual(
             response.data["created_at"],
@@ -165,7 +163,7 @@ class HookViewSetTests(APITestCase):
         cls.hook = baker.make(
             Hook,
             name="Test Hook",
-            hook_set=cls.hookset,
+            hookset=cls.hookset,
             created_by=cls.user,
             is_triggered=False,
         )
@@ -198,7 +196,7 @@ class HookViewSetTests(APITestCase):
         # Check all HookSerializer fields exist
         expected_fields = [
             "id",
-            "hook_set",
+            "hookset",
             "is_triggered",
             "triggered_at",
             "created_by",
@@ -211,7 +209,7 @@ class HookViewSetTests(APITestCase):
             )
         # Verify all field values match model
         self.assertEqual(response.data["id"], self.hook.pk)
-        self.assertEqual(response.data["hook_set"], self.hook.hook_set.pk)
+        self.assertEqual(response.data["hookset"], self.hook.hookset.pk)
         self.assertEqual(response.data["is_triggered"], self.hook.is_triggered)
         self.assertEqual(response.data["triggered_at"], self.hook.triggered_at)
         self.assertEqual(response.data["created_by"]["id"], self.hook.created_by.pk)
@@ -227,7 +225,7 @@ class HookViewSetTests(APITestCase):
     def test_create_hook(self):
         """Test creating a new hook."""
         data = {
-            "hook_set": self.hookset.pk,
+            "hookset": self.hookset.pk,
         }
         response = self.client.post(self.list_url, data)
 
@@ -237,7 +235,7 @@ class HookViewSetTests(APITestCase):
     def test_create_hook_invalid_hookset(self):
         """Test creating a hook with invalid hookset fails."""
         data = {
-            "hook_set": 99999,
+            "hookset": 99999,
         }
         response = self.client.post(self.list_url, data)
 
@@ -277,14 +275,14 @@ class HookTriggerActionTests(APITestCase):
         self.hook1 = baker.make(
             Hook,
             name="Hook 1",
-            hook_set=self.hookset,
+            hookset=self.hookset,
             created_by=self.user,
             is_triggered=False,
         )
         self.hook2 = baker.make(
             Hook,
             name="Hook 2",
-            hook_set=self.hookset,
+            hookset=self.hookset,
             created_by=self.user,
             is_triggered=False,
         )
@@ -306,7 +304,7 @@ class HookTriggerActionTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn("triggered successfully", response.data["detail"])
 
-    def test_trigger_hook_sets_triggered_flag(self):
+    def test_trigger_hooksets_triggered_flag(self):
         """Test triggering a hook sets is_triggered to True."""
         url = reverse("trader:hook-trigger", kwargs={"pk": self.hook1.pk})
         self.client.post(url, {})

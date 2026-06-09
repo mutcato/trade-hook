@@ -14,7 +14,7 @@ class Hook(models.Model):
 
     uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     name = models.CharField(max_length=255)
-    hook_set = models.ForeignKey("HookSet", on_delete=models.CASCADE)
+    hookset = models.ForeignKey("HookSet", on_delete=models.CASCADE)
     is_triggered = models.BooleanField(default=False)
     triggered_at = models.DateTimeField(null=True, blank=True)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)

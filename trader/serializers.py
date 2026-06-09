@@ -10,7 +10,7 @@ class HookCreateUpdateSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Hook
-        fields = ["hook_set", "created_by"]
+        fields = ["hookset", "created_by"]
 
 
 class HookSerializer(serializers.ModelSerializer):
@@ -20,7 +20,7 @@ class HookSerializer(serializers.ModelSerializer):
         model = Hook
         fields = [
             "id",
-            "hook_set",
+            "hookset",
             "is_triggered",
             "triggered_at",
             "created_by",
@@ -39,7 +39,7 @@ class HookSetCreateUpdateSerializer(serializers.ModelSerializer):
 
 class HookSetSerializer(serializers.ModelSerializer):
     created_by = UserSerializer(read_only=True)
-    hook_set = HookSerializer(many=True, read_only=True)
+    hookset = HookSerializer(many=True, read_only=True)
 
     class Meta:
         model = HookSet
@@ -47,7 +47,7 @@ class HookSetSerializer(serializers.ModelSerializer):
             "id",
             "name",
             "timewindow",
-            "hook_set",
+            "hookset",
             "created_by",
             "created_at",
             "updated_at",
