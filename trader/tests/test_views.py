@@ -168,7 +168,9 @@ class HookViewSetTests(APITestCase):
             is_triggered=False,
         )
         cls.list_url = reverse("trader:hook-list")
-        cls.detail_url = reverse("trader:hook-detail", kwargs={"pk": cls.hook.pk})
+        cls.detail_url = reverse(
+            "trader:hook-detail", kwargs={"uuid": cls.hook.uuid}
+        )
 
     def setUp(self):
         refresh = RefreshToken.for_user(self.user)
@@ -196,6 +198,7 @@ class HookViewSetTests(APITestCase):
         # Check all HookSerializer fields exist
         expected_fields = [
             "id",
+            "name",
             "hookset",
             "is_triggered",
             "triggered_at",
@@ -209,6 +212,7 @@ class HookViewSetTests(APITestCase):
             )
         # Verify all field values match model
         self.assertEqual(response.data["id"], self.hook.pk)
+        self.assertEqual(response.data["name"], self.hook.name)
         self.assertEqual(response.data["hookset"], self.hook.hookset.pk)
         self.assertEqual(response.data["is_triggered"], self.hook.is_triggered)
         self.assertEqual(response.data["triggered_at"], self.hook.triggered_at)
@@ -225,6 +229,7 @@ class HookViewSetTests(APITestCase):
     def test_create_hook(self):
         """Test creating a new hook."""
         data = {
+            "name": "New Hook",
             "hookset": self.hookset.pk,
         }
         response = self.client.post(self.list_url, data)
@@ -235,6 +240,7 @@ class HookViewSetTests(APITestCase):
     def test_create_hook_invalid_hookset(self):
         """Test creating a hook with invalid hookset fails."""
         data = {
+            "name": "Bad Hook",
             "hookset": 99999,
         }
         response = self.client.post(self.list_url, data)
@@ -250,7 +256,10 @@ class HookViewSetTests(APITestCase):
 
     def test_retrieve_nonexistent_hook(self):
         """Test retrieving a non-existent hook returns 404."""
-        url = reverse("trader:hook-detail", kwargs={"pk": 99999})
+        url = reverse(
+            "trader:hook-detail",
+            kwargs={"uuid": "00000000-0000-0000-0000-000000000000"},
+        )
         response = self.client.get(url)
 
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
@@ -298,7 +307,7 @@ class HookTriggerActionTests(APITestCase):
 
     def test_trigger_hook_success(self):
         """Test triggering a hook returns 200."""
-        url = reverse("trader:hook-trigger", kwargs={"pk": self.hook1.pk})
+        url = reverse("trader:hook-trigger", kwargs={"uuid": self.hook1.uuid})
         response = self.client.post(url, {})
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -306,7 +315,7 @@ class HookTriggerActionTests(APITestCase):
 
     def test_trigger_hooksets_triggered_flag(self):
         """Test triggering a hook sets is_triggered to True."""
-        url = reverse("trader:hook-trigger", kwargs={"pk": self.hook1.pk})
+        url = reverse("trader:hook-trigger", kwargs={"uuid": self.hook1.uuid})
         self.client.post(url, {})
 
         self.hook1.refresh_from_db()
@@ -316,14 +325,17 @@ class HookTriggerActionTests(APITestCase):
     def test_trigger_hook_unauthenticated(self):
         """Test triggering a hook requires authentication."""
         self.client.credentials()
-        url = reverse("trader:hook-trigger", kwargs={"pk": self.hook1.pk})
+        url = reverse("trader:hook-trigger", kwargs={"uuid": self.hook1.uuid})
         response = self.client.post(url, {})
 
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
     def test_trigger_nonexistent_hook(self):
         """Test triggering a non-existent hook returns 404."""
-        url = reverse("trader:hook-trigger", kwargs={"pk": 99999})
+        url = reverse(
+            "trader:hook-trigger",
+            kwargs={"uuid": "00000000-0000-0000-0000-000000000000"},
+        )
         response = self.client.post(url, {})
 
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
@@ -331,7 +343,7 @@ class HookTriggerActionTests(APITestCase):
     def test_trigger_partial_hooks_does_not_trigger_trades(self):
         """Test that triggering only some hooks does not trigger trades."""
         # Only trigger hook1, leave hook2 untriggered
-        url = reverse("trader:hook-trigger", kwargs={"pk": self.hook1.pk})
+        url = reverse("trader:hook-trigger", kwargs={"uuid": self.hook1.uuid})
         self.client.post(url, {})
 
         self.trade.refresh_from_db()
@@ -345,7 +357,7 @@ class HookTriggerActionTests(APITestCase):
         self.hook1.save()
 
         # Trigger hook2
-        url = reverse("trader:hook-trigger", kwargs={"pk": self.hook2.pk})
+        url = reverse("trader:hook-trigger", kwargs={"uuid": self.hook2.uuid})
         self.client.post(url, {})
 
         self.trade.refresh_from_db()

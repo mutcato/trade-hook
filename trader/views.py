@@ -28,6 +28,7 @@ class HookSetViewSet(viewsets.ModelViewSet):
 
 class HookViewSet(viewsets.ModelViewSet):
     queryset = Hook.objects.select_related("hookset")
+    lookup_field = "uuid"
 
     def get_serializer_class(self):
         if self.action in ["create", "update", "partial_update"]:
@@ -35,7 +36,7 @@ class HookViewSet(viewsets.ModelViewSet):
         return HookSerializer
 
     @action(detail=True, methods=["post"])
-    def trigger(self, request, pk=None):
+    def trigger(self, request, uuid=None):
         hook = self.get_object()
         hook.trigger()
 

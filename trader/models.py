@@ -92,3 +92,25 @@ class Trade(models.Model):
         self.triggered_at = timezone.now()
         self.save()
         # TODO: Implement trade API calls
+
+
+PLATFORM_CHOICES = [
+    ("BINANCE", "Binance"),
+    ("KUCOIN", "Kucoin"),
+    ("OKX", "OKX"),
+    ("BITGET", "Bitget"),
+    ("BITFINEX", "Bitfinex"),
+    ("BITSTAMP", "Bitstamp"),
+]
+
+class Exchange(models.Model):
+    """An exchange is a trading platform that is used to trade."""
+
+    platform = models.CharField(choices=PLATFORM_CHOICES, max_length=255)
+    api_key = models.CharField(max_length=255)
+    api_secret = models.CharField(max_length=255)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return self.name
