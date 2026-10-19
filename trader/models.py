@@ -1,10 +1,18 @@
+import json
+import logging
+import urllib.error
+import urllib.request
 import uuid
 from datetime import timedelta
 
 from django.conf import settings
+from django.contrib.contenttypes.fields import GenericForeignKey
+from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ValidationError
 from django.db import models, transaction
 from django.utils import timezone
+
+logger = logging.getLogger(__name__)
 
 # Create your models here.
 
@@ -42,6 +50,52 @@ class HookSet(models.Model):
 
     def __str__(self):
         return self.name
+
+    def set_notification_channels(self, channels):
+        """Replace the notification targets for this hookset with the given channel instances.
+
+        `channels` can mix any model that has a `.send(message)` method (Telegram
+        today, Email later) — NotificationTarget's GenericForeignKey means HookSet
+        never needs a new field/migration when another channel type is added.
+        """
+        self.notification_targets.all().delete()
+        NotificationTarget.objects.bulk_create(
+            NotificationTarget(
+                hookset=self,
+                content_type=ContentType.objects.get_for_model(channel),
+                object_id=channel.pk,
+            )
+            for channel in channels
+        )
+
+    def notify(self, message):
+        for target in self.notification_targets.select_related("content_type"):
+            channel = target.channel
+            if channel is not None:
+                channel.send(message)
+
+
+class NotificationTarget(models.Model):
+    """Links a HookSet to one notification channel (Telegram, Email, ...) via a generic FK.
+
+    This is what lets a HookSet fan out to any number of channel *types* through a
+    single relation instead of gaining a new ManyToManyField every time a channel
+    type (Telegram, Email, ...) is added.
+    """
+
+    hookset = models.ForeignKey(
+        HookSet, on_delete=models.CASCADE, related_name="notification_targets"
+    )
+    content_type = models.ForeignKey(ContentType, on_delete=models.CASCADE)
+    object_id = models.PositiveIntegerField()
+    channel = GenericForeignKey("content_type", "object_id")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ("hookset", "content_type", "object_id")
+
+    def __str__(self):
+        return f"{self.hookset} -> {self.channel}"
 
 
 ACTION_CHOICES = [
@@ -114,3 +168,35 @@ class Exchange(models.Model):
 
     def __str__(self):
         return self.name
+
+
+class Telegram(models.Model):
+    """A Telegram destination that a HookSet can notify when it executes (see NotificationTarget)."""
+
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    name = models.CharField(max_length=255)
+    chat_id = models.CharField(max_length=64)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return self.name
+
+    def send(self, message):
+        token = settings.TELEGRAM_BOT_TOKEN
+        if not token:
+            logger.warning(
+                "TELEGRAM_BOT_TOKEN is not configured; skipping alert to %s", self.name
+            )
+            return
+
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        body = json.dumps({"chat_id": self.chat_id, "text": message}).encode("utf-8")
+        request = urllib.request.Request(
+            url, data=body, headers={"Content-Type": "application/json"}
+        )
+        try:
+            urllib.request.urlopen(request, timeout=10)
+        except urllib.error.URLError:
+            logger.exception("Failed to send Telegram alert to %s (%s)", self.name, self.chat_id)

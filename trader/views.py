@@ -1,17 +1,20 @@
 from datetime import timedelta
 
+from django.conf import settings
 from django.db.models import Q
 from django.utils import timezone
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
-from .models import Hook, HookSet, Trade
+from .models import Hook, HookSet, Telegram, Trade
 from .serializers import (
     HookCreateUpdateSerializer,
     HookSerializer,
     HookSetCreateUpdateSerializer,
     HookSetSerializer,
+    TelegramCreateUpdateSerializer,
+    TelegramSerializer,
     TradeCreateUpdateSerializer,
     TradeSerializer,
 )
@@ -54,11 +57,9 @@ class HookViewSet(viewsets.ModelViewSet):
             .filter(Q(is_triggered=False) | Q(triggered_at__lt=cutoff_time))
         )
 
-        # If all siblings are valid, bulk trigger untriggered trades
+        # If all siblings are valid, notify the hookset's Telegrams
         if not invalid_sibling.exists():
-            trades = Trade.objects.filter(hookset=hook.hookset, is_triggered=False)
-            for trade in trades:
-                trade.trigger()
+            hook.hookset.notify(f"{hook.hookset.name} triggered.")
 
         return Response(
             {"detail": "Hook triggered successfully"}, status=status.HTTP_200_OK
@@ -72,3 +73,22 @@ class TradeViewSet(viewsets.ModelViewSet):
         if self.action in ["create", "update", "partial_update"]:
             return TradeCreateUpdateSerializer
         return TradeSerializer
+
+
+class TelegramViewSet(viewsets.ModelViewSet):
+    queryset = Telegram.objects.all()
+
+    def get_serializer_class(self):
+        if self.action in ["create", "update", "partial_update"]:
+            return TelegramCreateUpdateSerializer
+        return TelegramSerializer
+
+    @action(detail=False, methods=["get"])
+    def bot_info(self, request):
+        bot_name = settings.TELEGRAM_BOT_NAME
+        return Response(
+            {
+                "bot_name": bot_name,
+                "bot_url": f"https://t.me/{bot_name}" if bot_name else None,
+            }
+        )

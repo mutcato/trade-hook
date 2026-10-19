@@ -89,6 +89,9 @@ WSGI_APPLICATION = "core.wsgi.application"
 POSTGRES_CONNECTION_STRING = env("POSTGRES_CONNECTION_STRING")
 connection_string = urlparse.urlparse(POSTGRES_CONNECTION_STRING)
 
+TELEGRAM_BOT_NAME = env("TELEGRAM_BOT_NAME", default="")
+TELEGRAM_BOT_TOKEN = env("TELEGRAM_BOT_TOKEN", default="")
+
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.postgresql",
