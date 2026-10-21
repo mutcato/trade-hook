@@ -5,6 +5,7 @@ from django.db.models import Q
 from django.utils import timezone
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
+from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
 from .models import Hook, HookSet, Telegram, Trade
@@ -38,8 +39,18 @@ class HookViewSet(viewsets.ModelViewSet):
             return HookCreateUpdateSerializer
         return HookSerializer
 
-    @action(detail=True, methods=["post"])
+    @action(
+        detail=True,
+        methods=["post"],
+        permission_classes=[AllowAny],
+        authentication_classes=[],
+    )
     def trigger(self, request, uuid=None):
+        """Public webhook endpoint — the unguessable UUID in the URL is the credential.
+
+        External signal sources (TradingView et al.) call this with no auth header,
+        so it opts out of the project-wide IsAuthenticated default.
+        """
         hook = self.get_object()
         hook.trigger()
 
@@ -60,6 +71,11 @@ class HookViewSet(viewsets.ModelViewSet):
         # If all siblings are valid, notify the hookset's Telegrams
         if not invalid_sibling.exists():
             hook.hookset.notify(f"{hook.hookset.name} triggered.")
+            # Clear the set so the next full round of signals starts a fresh cycle
+            # instead of re-alerting on every subsequent trigger.
+            Hook.objects.filter(hookset=hook.hookset).update(
+                is_triggered=False, triggered_at=None
+            )
 
         return Response(
             {"detail": "Hook triggered successfully"}, status=status.HTTP_200_OK

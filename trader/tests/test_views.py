@@ -1,4 +1,5 @@
 from datetime import time, timedelta
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.urls import reverse
@@ -8,7 +9,7 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from trader.models import Hook, HookSet, Trade
+from trader.models import Hook, HookSet, Telegram, Trade
 
 User = get_user_model()
 
@@ -323,12 +324,14 @@ class HookTriggerActionTests(APITestCase):
         self.assertIsNotNone(self.hook1.triggered_at)
 
     def test_trigger_hook_unauthenticated(self):
-        """Test triggering a hook requires authentication."""
+        """Test triggering a hook is public — external signal sources send no auth."""
         self.client.credentials()
         url = reverse("trader:hook-trigger", kwargs={"uuid": self.hook1.uuid})
         response = self.client.post(url, {})
 
-        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.hook1.refresh_from_db()
+        self.assertTrue(self.hook1.is_triggered)
 
     def test_trigger_nonexistent_hook(self):
         """Test triggering a non-existent hook returns 404."""
@@ -362,6 +365,61 @@ class HookTriggerActionTests(APITestCase):
 
         self.trade.refresh_from_db()
         self.assertFalse(self.trade.is_triggered)
+
+
+class HookTriggerAlertTests(APITestCase):
+    """Tests that a completed hookset sends a Telegram alert."""
+
+    def setUp(self):
+        self.user = baker.make(User)
+        self.hookset = baker.make(
+            HookSet, timewindow=DEFAULT_TIMEWINDOW, created_by=self.user
+        )
+        self.telegram = baker.make(Telegram, created_by=self.user)
+        self.hookset.set_notification_channels([self.telegram])
+        self.hook1 = baker.make(
+            Hook, hookset=self.hookset, created_by=self.user, is_triggered=False
+        )
+        self.hook2 = baker.make(
+            Hook, hookset=self.hookset, created_by=self.user, is_triggered=False
+        )
+
+    def trigger(self, hook):
+        url = reverse("trader:hook-trigger", kwargs={"uuid": hook.uuid})
+        return self.client.post(url, {})
+
+    def test_alert_sent_when_all_hooks_fire_within_window(self):
+        with patch.object(Telegram, "send") as send:
+            self.trigger(self.hook1)
+            send.assert_not_called()  # set incomplete
+
+            self.trigger(self.hook2)
+            send.assert_called_once()
+
+        self.assertIn(self.hookset.name, send.call_args[0][0])
+
+    def test_no_alert_when_sibling_fired_outside_window(self):
+        self.hook1.is_triggered = True
+        self.hook1.triggered_at = timezone.now() - timedelta(hours=2)
+        self.hook1.save()
+
+        with patch.object(Telegram, "send") as send:
+            self.trigger(self.hook2)
+            send.assert_not_called()
+
+    def test_cycle_resets_so_alert_is_not_repeated(self):
+        with patch.object(Telegram, "send") as send:
+            self.trigger(self.hook1)
+            self.trigger(self.hook2)
+            self.assertEqual(send.call_count, 1)
+
+            # Same hook firing again must not re-alert on the already-completed set
+            self.trigger(self.hook1)
+            self.assertEqual(send.call_count, 1)
+
+            # A fresh full round alerts again
+            self.trigger(self.hook2)
+            self.assertEqual(send.call_count, 2)
 
 
 class TradeViewSetTests(APITestCase):
