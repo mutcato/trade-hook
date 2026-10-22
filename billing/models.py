@@ -101,6 +101,10 @@ class Order(models.Model):
         max_digits=30, decimal_places=12, null=True, blank=True
     )
 
+    # Running total of credits already handed out for this order. Callbacks grant
+    # the difference against it, so a partial payment that is later topped up
+    # releases only the remainder — and a repeated callback releases nothing.
+    credits_granted = models.PositiveIntegerField(default=0)
     credited_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

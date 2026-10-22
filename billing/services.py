@@ -1,15 +1,20 @@
 """Credit accounting.
 
 Everything that moves credits goes through here so that locking and the
-append-only ledger stay in one place. Two invariants matter:
+append-only ledger stay in one place. Three invariants matter:
 
 * A HookSet execution consumes exactly one credit, free quota first.
-* A provider may deliver the same IPN repeatedly, so an order grants its
-  credits at most once (guarded by `Order.credited_at`).
+* An order never hands out more credits than it has earned, however many times
+  the provider repeats a callback — each grant is the difference against
+  `Order.credits_granted`.
+* Underpaying does not forfeit the money. A shortfall within
+  `settings.BILLING_PARTIAL_PAYMENT_TOLERANCE` counts as paid in full (exchange
+  withdrawal fees land here); a larger one earns credits in proportion.
 """
 
 import logging
 from dataclasses import dataclass
+from decimal import ROUND_FLOOR, Decimal, InvalidOperation
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
@@ -82,25 +87,82 @@ def consume_execution(user, hookset=None):
     return ConsumeResult(False, "none", 0)
 
 
+def _as_decimal(value):
+    """Coerce a provider amount to Decimal, or None when it isn't a number.
+
+    Provider payloads carry amounts as JSON strings. Django only converts on
+    save/refresh, not on assignment, so anything read back off an in-memory
+    instance has to be coerced here or the arithmetic sees a str.
+    """
+    if value is None:
+        return None
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError):
+        return None
+
+
+def credits_owed_for(order, actually_paid):
+    """Credits `order` has earned for `actually_paid` units of its pay currency.
+
+    Both amounts are in the crypto the invoice asked for — never the USD price —
+    so the ratio is against `order.pay_amount`. Returns None when that cannot be
+    judged (no invoice amount recorded yet), which means "do not grant anything".
+    """
+    expected = _as_decimal(order.pay_amount)
+    paid = _as_decimal(actually_paid)
+    if expected is None or expected <= 0 or paid is None:
+        return None
+
+    ratio = paid / expected
+
+    if ratio <= 0:
+        return 0
+    if ratio >= settings.BILLING_PARTIAL_PAYMENT_TOLERANCE:
+        return order.credits
+    return int(
+        (Decimal(order.credits) * ratio).to_integral_value(rounding=ROUND_FLOOR)
+    )
+
+
 @transaction.atomic
-def credit_order(order):
-    """Grant `order`'s credits, exactly once. True if this call did the granting."""
+def grant_order_credits(order, credits_owed):
+    """Top this order's grants up to `credits_owed`. Returns credits actually added.
+
+    Granting the *difference* rather than a flat amount is what makes repeated
+    callbacks harmless and still lets a topped-up partial payment release its
+    remainder later.
+    """
     order = Order.objects.select_for_update().get(pk=order.pk)
-    if order.credited_at is not None:
-        return False
+    delta = min(credits_owed, order.credits) - order.credits_granted
+    if delta <= 0:
+        return 0
 
     Wallet.objects.get_or_create(user=order.user)
     wallet = Wallet.objects.select_for_update().get(user=order.user)
-    wallet.balance += order.credits
+    wallet.balance += delta
     wallet.save(update_fields=["balance", "updated_at"])
 
-    order.credited_at = timezone.now()
-    order.status = Order.Status.CONFIRMED
-    order.save(update_fields=["credited_at", "status", "updated_at"])
+    order.credits_granted += delta
+    if order.credited_at is None:
+        order.credited_at = timezone.now()
+    order.status = (
+        Order.Status.CONFIRMED
+        if order.credits_granted >= order.credits
+        else Order.Status.PARTIALLY_PAID
+    )
+    order.save(
+        update_fields=["credits_granted", "credited_at", "status", "updated_at"]
+    )
 
-    _record(wallet, order.credits, LedgerEntry.Reason.PURCHASE, order=order)
-    logger.info("Credited %s credits to %s (order %s)", order.credits, order.user, order.uuid)
-    return True
+    _record(wallet, delta, LedgerEntry.Reason.PURCHASE, order=order)
+    logger.info("Credited %s credits to %s (order %s)", delta, order.user, order.uuid)
+    return delta
+
+
+def credit_order(order):
+    """Grant `order` its full credits — the fully-paid path."""
+    return grant_order_credits(order, order.credits)
 
 
 def create_order(user, pack, provider=None):
@@ -159,38 +221,77 @@ def apply_ipn(payload, provider=None):
         updates["provider_payment_id"] = str(payload["payment_id"])
     if payload.get("pay_currency"):
         updates["pay_currency"] = str(payload["pay_currency"])
-    if payload.get("pay_amount") is not None:
-        updates["pay_amount"] = payload["pay_amount"]
-    if payload.get("actually_paid") is not None:
-        updates["actually_paid"] = payload["actually_paid"]
+    # Coerced here so the in-memory instance holds numbers, not JSON strings.
+    pay_amount = _as_decimal(payload.get("pay_amount"))
+    if pay_amount is not None:
+        updates["pay_amount"] = pay_amount
+    actually_paid = _as_decimal(payload.get("actually_paid"))
+    if actually_paid is not None:
+        updates["actually_paid"] = actually_paid
 
-    if payment_status in provider.SETTLED_STATUSES:
+    def apply_updates():
         for field, value in updates.items():
             setattr(order, field, value)
         if updates:
             order.save(update_fields=[*updates, "updated_at"])
+
+    if payment_status in provider.SETTLED_STATUSES:
+        apply_updates()
         credit_order(order)
-        # credit_order works on its own locked copy, so re-read before handing
-        # the order back or callers would see a stale pending status.
+        # The grant works on its own locked copy, so re-read before handing the
+        # order back or callers would see a stale pending status.
         order.refresh_from_db()
         return order
 
     if payment_status == "partially_paid":
-        updates["status"] = Order.Status.PARTIALLY_PAID
-    elif payment_status == "failed":
+        # The money is already in the payout wallet — forfeiting it would just
+        # turn an underpayment into a support ticket. Absorb a fee-sized
+        # shortfall, otherwise credit what was actually paid for.
+        apply_updates()
+        owed = credits_owed_for(order, order.actually_paid)
+        if owed is None:
+            logger.warning(
+                "Order %s is partially paid but has no invoice amount to judge it against",
+                order.uuid,
+            )
+        else:
+            granted = grant_order_credits(order, owed)
+            if owed < order.credits:
+                logger.warning(
+                    "Order %s short by more than tolerance (%s of %s %s): "
+                    "granted %s of %s credits",
+                    order.uuid,
+                    order.actually_paid,
+                    order.pay_amount,
+                    order.pay_currency,
+                    owed,
+                    order.credits,
+                )
+            else:
+                logger.info(
+                    "Order %s settled within tolerance (%s of %s %s)",
+                    order.uuid,
+                    order.actually_paid,
+                    order.pay_amount,
+                    order.pay_currency,
+                )
+            if granted == 0 and order.credits_granted == 0:
+                order.status = Order.Status.PARTIALLY_PAID
+                order.save(update_fields=["status", "updated_at"])
+        order.refresh_from_db()
+        return order
+
+    if payment_status == "failed":
         updates["status"] = Order.Status.FAILED
     elif payment_status == "expired":
         updates["status"] = Order.Status.EXPIRED
     elif payment_status == "refunded":
         updates["status"] = Order.Status.REFUNDED
 
-    # A settled order must never be walked backwards by a late callback.
-    if order.credited_at is not None:
+    # An order that already released credits must not be walked backwards by a
+    # late callback.
+    if order.credits_granted > 0:
         updates.pop("status", None)
 
-    if updates:
-        for field, value in updates.items():
-            setattr(order, field, value)
-        order.save(update_fields=[*updates, "updated_at"])
-
+    apply_updates()
     return order

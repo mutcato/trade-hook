@@ -225,6 +225,168 @@ class ApplyIPNTests(TestCase):
         self.assertIsNone(result)
 
 
+@override_settings(BILLING_PARTIAL_PAYMENT_TOLERANCE=Decimal("0.97"))
+class PartialPaymentTests(TestCase):
+    """Tests for underpayment — the common case when paying from an exchange.
+
+    The ratio is always `actually_paid / pay_amount` in the invoice's crypto,
+    never against the USD price.
+    """
+
+    def setUp(self):
+        self.user = baker.make(User)
+        self.order = baker.make(
+            Order,
+            user=self.user,
+            credits=10,
+            price_usd=Decimal("8.45"),
+            pay_amount=Decimal("8.45"),
+            pay_currency="usdttrc20",
+            status=Order.Status.PENDING,
+        )
+
+    def ipn(self, actually_paid, payment_status="partially_paid"):
+        return {
+            "order_id": str(self.order.uuid),
+            "payment_status": payment_status,
+            "payment_id": "1",
+            "pay_currency": "usdttrc20",
+            "pay_amount": "8.45",
+            "actually_paid": str(actually_paid),
+        }
+
+    def test_fee_sized_shortfall_counts_as_paid_in_full(self):
+        """Test a 1% shortfall is absorbed rather than becoming a support ticket."""
+        services.apply_ipn(self.ipn("8.37"))  # 99.1%
+
+        self.order.refresh_from_db()
+        self.assertEqual(self.order.status, Order.Status.CONFIRMED)
+        self.assertEqual(self.order.credits_granted, 10)
+        self.assertEqual(services.get_wallet(self.user).balance, 10)
+
+    def test_shortfall_just_inside_the_tolerance_is_full(self):
+        """Test the tolerance boundary is inclusive."""
+        services.apply_ipn(self.ipn(Decimal("8.45") * Decimal("0.97")))
+
+        self.assertEqual(services.get_wallet(self.user).balance, 10)
+
+    def test_larger_shortfall_is_credited_proportionally(self):
+        """Test paying 70% of the invoice earns 7 of 10 credits."""
+        with self.assertLogs("billing.services", level="WARNING"):
+            services.apply_ipn(self.ipn("5.915"))  # exactly 70%
+
+        self.order.refresh_from_db()
+        self.assertEqual(self.order.credits_granted, 7)
+        self.assertEqual(self.order.status, Order.Status.PARTIALLY_PAID)
+        self.assertEqual(services.get_wallet(self.user).balance, 7)
+
+    def test_proportional_credit_rounds_down(self):
+        """Test a part-credit is never rounded up in the customer's favour."""
+        with self.assertLogs("billing.services", level="WARNING"):
+            services.apply_ipn(self.ipn("6.76"))  # 80%
+
+        self.order.refresh_from_db()
+        self.assertEqual(self.order.credits_granted, 8)
+
+    def test_topping_up_releases_only_the_remainder(self):
+        """Test a later full payment grants the difference, not another full pack."""
+        with self.assertLogs("billing.services", level="WARNING"):
+            services.apply_ipn(self.ipn("5.915"))  # 70% -> 7 credits
+        self.assertEqual(services.get_wallet(self.user).balance, 7)
+
+        services.apply_ipn(self.ipn("8.45", payment_status="finished"))
+
+        self.order.refresh_from_db()
+        self.assertEqual(self.order.credits_granted, 10)
+        self.assertEqual(self.order.status, Order.Status.CONFIRMED)
+        self.assertEqual(services.get_wallet(self.user).balance, 10)
+
+    def test_repeated_partial_callback_grants_once(self):
+        """Test the provider repeating the same partial callback adds nothing."""
+        with self.assertLogs("billing.services", level="WARNING"):
+            services.apply_ipn(self.ipn("5.915"))
+            services.apply_ipn(self.ipn("5.915"))
+
+        self.assertEqual(services.get_wallet(self.user).balance, 7)
+        self.assertEqual(
+            LedgerEntry.objects.filter(reason=LedgerEntry.Reason.PURCHASE).count(), 1
+        )
+
+    def test_dust_payment_grants_nothing_but_is_recorded(self):
+        """Test a payment too small for even one credit is flagged, not credited."""
+        with self.assertLogs("billing.services", level="WARNING"):
+            services.apply_ipn(self.ipn("0.10"))
+
+        self.order.refresh_from_db()
+        self.assertEqual(self.order.credits_granted, 0)
+        self.assertEqual(self.order.status, Order.Status.PARTIALLY_PAID)
+        self.assertEqual(self.order.actually_paid, Decimal("0.10"))
+        self.assertEqual(services.get_wallet(self.user).balance, 0)
+
+    def test_overpayment_never_grants_more_than_the_pack(self):
+        """Test sending too much does not inflate the pack."""
+        services.apply_ipn(self.ipn("20.00"))
+
+        self.order.refresh_from_db()
+        self.assertEqual(self.order.credits_granted, 10)
+        self.assertEqual(services.get_wallet(self.user).balance, 10)
+
+    def test_partial_without_an_invoice_amount_grants_nothing(self):
+        """Test an unjudgeable payment is never guessed at."""
+        self.order.pay_amount = None
+        self.order.save()
+
+        with self.assertLogs("billing.services", level="WARNING"):
+            services.apply_ipn(
+                {
+                    "order_id": str(self.order.uuid),
+                    "payment_status": "partially_paid",
+                    "actually_paid": "5.00",
+                }
+            )
+
+        self.assertEqual(services.get_wallet(self.user).balance, 0)
+
+    def test_late_expiry_cannot_revoke_a_partial_grant(self):
+        """Test credits already released survive a later failure callback."""
+        with self.assertLogs("billing.services", level="WARNING"):
+            services.apply_ipn(self.ipn("5.915"))
+            services.apply_ipn(self.ipn("5.915", payment_status="expired"))
+
+        self.order.refresh_from_db()
+        self.assertEqual(self.order.status, Order.Status.PARTIALLY_PAID)
+        self.assertEqual(services.get_wallet(self.user).balance, 7)
+
+
+class CreditsOwedTests(TestCase):
+    """Unit tests for the ratio maths."""
+
+    def order(self, credits=10, pay_amount="8.45"):
+        return Order(
+            credits=credits,
+            price_usd=Decimal("8.45"),
+            pay_amount=Decimal(pay_amount) if pay_amount is not None else None,
+        )
+
+    def test_none_when_no_invoice_amount(self):
+        """Test a missing pay_amount is unjudgeable rather than zero."""
+        self.assertIsNone(services.credits_owed_for(self.order(pay_amount=None), 5))
+
+    def test_none_when_nothing_paid_is_reported(self):
+        """Test a missing actually_paid is unjudgeable."""
+        self.assertIsNone(services.credits_owed_for(self.order(), None))
+
+    def test_zero_for_a_zero_payment(self):
+        """Test a zero payment earns nothing."""
+        self.assertEqual(services.credits_owed_for(self.order(), Decimal("0")), 0)
+
+    def test_exact_payment_earns_the_whole_pack(self):
+        """Test paying the invoice earns every credit."""
+        self.assertEqual(
+            services.credits_owed_for(self.order(), Decimal("8.45")), 10
+        )
+
+
 class IPNSignatureTests(TestCase):
     """Tests for the HMAC-SHA512 signature that authenticates callbacks."""
 

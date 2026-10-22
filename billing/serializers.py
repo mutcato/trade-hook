@@ -47,6 +47,7 @@ class OrderSerializer(serializers.ModelSerializer):
         fields = [
             "uuid",
             "credits",
+            "credits_granted",
             "price_usd",
             "status",
             "invoice_url",

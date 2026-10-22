@@ -12,6 +12,7 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 
 import urllib.parse as urlparse
 from datetime import timedelta
+from decimal import Decimal
 from pathlib import Path
 
 import environ
@@ -96,6 +97,13 @@ TELEGRAM_BOT_TOKEN = env("TELEGRAM_BOT_TOKEN", default="")
 # Billing — execution credits
 # Lifetime free executions granted to every account before a top-up is needed.
 FREE_EXECUTION_QUOTA = env.int("FREE_EXECUTION_QUOTA", default=3)
+# Share of the invoice that counts as paid in full. Customers paying from an
+# exchange underpay by the withdrawal fee by default, so a shortfall this small
+# is absorbed rather than left as a support ticket. Anything below it is
+# credited proportionally. Read as a string to avoid float imprecision.
+BILLING_PARTIAL_PAYMENT_TOLERANCE = Decimal(
+    env("BILLING_PARTIAL_PAYMENT_TOLERANCE", default="0.97")
+)
 # Where the provider sends the customer back after paying.
 FRONTEND_BASE_URL = env("FRONTEND_BASE_URL", default="http://127.0.0.1:5173")
 NOWPAYMENTS_API_KEY = env("NOWPAYMENTS_API_KEY", default="")
