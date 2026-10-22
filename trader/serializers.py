@@ -5,6 +5,25 @@ from authentication.serializers import UserSerializer
 from .models import Hook, HookSet, Telegram, Trade
 
 
+class OwnedPrimaryKeyRelatedField(serializers.PrimaryKeyRelatedField):
+    """A related field that only resolves objects the requesting user owns.
+
+    The ViewSets' `get_queryset()` filters what a user can *look up*, but it does
+    not constrain an id sent as a related field on write. Without this, a user
+    could attach their Hook/Trade to someone else's HookSet — stealing that
+    owner's execution credits, or wedging their strategy permanently with a
+    sibling hook the owner cannot see or delete — or point their own HookSet at
+    another user's Telegram chat.
+    """
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        request = self.context.get("request")
+        if request is None or not request.user.is_authenticated:
+            return queryset.none()
+        return queryset.filter(created_by=request.user)
+
+
 class TelegramCreateUpdateSerializer(serializers.ModelSerializer):
     created_by = serializers.HiddenField(default=serializers.CurrentUserDefault())
 
@@ -31,6 +50,7 @@ class TelegramSerializer(serializers.ModelSerializer):
 
 class HookCreateUpdateSerializer(serializers.ModelSerializer):
     created_by = serializers.HiddenField(default=serializers.CurrentUserDefault())
+    hookset = OwnedPrimaryKeyRelatedField(queryset=HookSet.objects.all())
 
     class Meta:
         model = Hook
@@ -64,7 +84,7 @@ class HookSetCreateUpdateSerializer(serializers.ModelSerializer):
     """
 
     created_by = serializers.HiddenField(default=serializers.CurrentUserDefault())
-    telegram_ids = serializers.PrimaryKeyRelatedField(
+    telegram_ids = OwnedPrimaryKeyRelatedField(
         source="telegrams",
         many=True,
         queryset=Telegram.objects.all(),
@@ -119,6 +139,7 @@ class HookSetSerializer(serializers.ModelSerializer):
 
 class TradeCreateUpdateSerializer(serializers.ModelSerializer):
     created_by = serializers.HiddenField(default=serializers.CurrentUserDefault())
+    hookset = OwnedPrimaryKeyRelatedField(queryset=HookSet.objects.all())
 
     class Meta:
         model = Trade

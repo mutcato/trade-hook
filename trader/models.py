@@ -3,7 +3,7 @@ import logging
 import urllib.error
 import urllib.request
 import uuid
-from datetime import timedelta
+from datetime import time
 
 from django.conf import settings
 from django.contrib.contenttypes.fields import GenericForeignKey
@@ -30,7 +30,7 @@ class Hook(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
-        return self.uuid
+        return str(self.uuid)
 
     def trigger(self):
         self.is_triggered = True
@@ -43,7 +43,7 @@ class HookSet(models.Model):
 
     uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     name = models.CharField(max_length=255)
-    timewindow = models.TimeField(default=timedelta(hours=1))
+    timewindow = models.TimeField(default=time(1, 0))
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -135,7 +135,9 @@ class Trade(models.Model):
         if len(assets[0]) > 5 or len(assets[1]) > 5:
             raise ValidationError("Invalid pair. Must be less than 5 characters long.")
 
-        if assets[0].isalpha() or assets[1].isalpha():
+        # Inverted before: this fired when an asset *was* alphabetic, so every
+        # ordinary pair like BTC/USDT failed its own "must be alphanumeric" rule.
+        if not (assets[0].isalnum() and assets[1].isalnum()):
             raise ValidationError("Invalid pair. Must be alphanumeric.")
 
         return pair
@@ -167,7 +169,7 @@ class Exchange(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
-        return self.name
+        return self.get_platform_display()
 
 
 class Telegram(models.Model):

@@ -29,6 +29,13 @@ Create or update `.env` in the project root. Key variables:
 - `TELEGRAM_BOT_TOKEN`: Bot token from BotFather (used for alerts)
 - `TELEGRAM_BOT_NAME`: Bot username (for display)
 - `ACCESS_TOKEN_LIFETIME`, `REFRESH_TOKEN_LIFETIME`: JWT token lifetimes in seconds
+- `FREE_EXECUTION_QUOTA`: Lifetime free executions per account (default 3)
+- `FRONTEND_BASE_URL`: Used to build the provider's success/cancel return URLs
+- `NOWPAYMENTS_API_KEY`, `NOWPAYMENTS_IPN_SECRET`: From the NOWPayments dashboard
+- `NOWPAYMENTS_SANDBOX`: Keep `true` to hit `api-sandbox.nowpayments.io` (default `true`)
+- `NOWPAYMENTS_IPN_CALLBACK_URL`: Publicly reachable URL for the callback; locally, tunnel it
+
+See `.env.example` for the full list with notes.
 
 ### Database Setup
 ```bash
@@ -88,6 +95,14 @@ coverage html  # Generates htmlcov/index.html
   - `Exchange`: Exchange credentials (currently unused in API, placeholder for future trade execution)
   - `NotificationTarget`: Generic FK bridge between HookSet and notification channels
 
+- **billing**: Execution credits, paid with crypto
+  - `CreditPack`: Purchasable bundle (rows, not constants — priced in the admin)
+  - `Wallet`: Per-user balance plus the lifetime free-tier counter
+  - `Order`: One top-up attempt against a provider; `credited_at` is the idempotency marker
+  - `LedgerEntry`: Append-only audit trail of every credit movement
+  - `providers/nowpayments.py`: NOWPayments adapter (non-custodial, hosted invoice, HMAC-signed IPN)
+  - `services.py`: The only place credits move — holds the locking and ledger writes
+
 - **core**: Django configuration and URL routing
 
 ### Key Design Patterns
@@ -104,8 +119,24 @@ This pattern lets you add new channel types (Email, Slack) without migrating Hoo
 When a Hook is triggered:
 1. Mark it as triggered with a timestamp
 2. Check if all sibling hooks in the same HookSet are triggered and within the time window
-3. If all conditions met, notify all Telegram channels linked to that HookSet
-4. Time window is stored as a TimeField in HookSet (e.g., 1 hour)
+3. If all conditions met, bill one execution credit then notify all Telegram channels linked to that HookSet
+4. Reset the cycle either way, so an unpaid cycle cannot sit armed and fire on the next top-up
+5. Time window is stored as a TimeField in HookSet (e.g., 1 hour)
+
+**Credit Metering**
+A *completed HookSet* is the billable event — not an individual hook trigger.
+`billing.services.consume_execution` spends the free tier
+(`settings.FREE_EXECUTION_QUOTA`, default 3) before the paid balance, and the
+HookSet's `created_by` is charged rather than whoever called the public webhook.
+Out of credits means no alert is sent, but `/hooks/{uuid}/trigger/` still answers
+200 (`executed: false`, `reason: "insufficient_credits"`) — an error status would
+make external signal sources like TradingView disable the webhook.
+
+**Payment Callbacks**
+NOWPayments reports `confirmed` once the chain confirms but *before* the payout is
+forwarded, so only `finished` grants credits. Callbacks are authenticated by the
+`x-nowpayments-sig` HMAC-SHA512 header over the key-sorted raw body — not by a
+token — mirroring how `HookViewSet.trigger` treats its UUID as the credential.
 
 **Serializer Patterns**
 ViewSets use different serializers for read vs. write:
@@ -128,6 +159,17 @@ ViewSets use different serializers for read vs. write:
 - `GET/POST /trades/` — List/create Trades
 - `GET/POST /telegrams/` — List/create Telegram destinations
 - `GET /telegrams/bot_info/` — Get bot name and Telegram link
+
+All trader ViewSets scope `get_queryset()` to `request.user`; `/hooks/{uuid}/trigger/`
+is the one deliberate exception, since the public webhook has no authenticated user.
+
+**Billing** (`/api/billing/`)
+- `GET /wallet/` — Caller's balance, free tier remaining, total available
+- `GET /packs/` — Active credit packs with per-credit price and discount
+- `GET/POST /orders/` — List own top-ups / open one (returns `invoice_url` to redirect to)
+- `GET /orders/{uuid}/` — Poll a single order (the frontend waits on `credited_at`)
+- `GET /ledger/` — Credit history
+- `POST /nowpayments/ipn/` — Provider callback; HMAC-signed, unauthenticated
 
 ## Common Tasks
 
@@ -163,6 +205,10 @@ python manage.py dbshell                                     # Open PostgreSQL s
 - **Exchange model** is defined but not exposed via API or linked to trades (ready for future implementation)
 - Telegram bot token is currently in `.env` (safe for development, but use environment-based secrets in production)
 - Time window validation and pair validation are in the models; consider moving complex validation to validators if it grows
+- **`HookSet.timewindow`** is a `TimeField` with a `timedelta` default, which is invalid — any
+  `baker.make(HookSet, ...)` must pass `timewindow` explicitly or the insert raises. Worth fixing
+  with a migration at some point.
+- **`Exchange.__str__`** returns `self.name`, a field the model does not have
 
 ## Important Files Reference
 
@@ -171,6 +217,8 @@ python manage.py dbshell                                     # Open PostgreSQL s
 - `trader/models.py` — Core models (HookSet, Hook, Trade, Telegram, NotificationTarget)
 - `trader/views.py` — ViewSets and custom actions
 - `trader/serializers.py` — Read/write serializers for all models
+- `billing/services.py` — All credit movement (consume, credit an order, apply a callback)
+- `billing/providers/nowpayments.py` — The only outbound payment-provider HTTP call
 - `authentication/models.py` — User model and UserManager
 - `manage.py` — Django management script
 - `requirements.txt` — Python dependencies

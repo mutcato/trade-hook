@@ -51,6 +51,7 @@ INSTALLED_APPS = [
     # Local apps
     "authentication",
     "trader",
+    "billing",
 ]
 
 MIDDLEWARE = [
@@ -91,6 +92,17 @@ connection_string = urlparse.urlparse(POSTGRES_CONNECTION_STRING)
 
 TELEGRAM_BOT_NAME = env("TELEGRAM_BOT_NAME", default="")
 TELEGRAM_BOT_TOKEN = env("TELEGRAM_BOT_TOKEN", default="")
+
+# Billing — execution credits
+# Lifetime free executions granted to every account before a top-up is needed.
+FREE_EXECUTION_QUOTA = env.int("FREE_EXECUTION_QUOTA", default=3)
+# Where the provider sends the customer back after paying.
+FRONTEND_BASE_URL = env("FRONTEND_BASE_URL", default="http://127.0.0.1:5173")
+NOWPAYMENTS_API_KEY = env("NOWPAYMENTS_API_KEY", default="")
+NOWPAYMENTS_IPN_SECRET = env("NOWPAYMENTS_IPN_SECRET", default="")
+NOWPAYMENTS_SANDBOX = env.bool("NOWPAYMENTS_SANDBOX", default=True)
+# Must be a publicly reachable URL — the provider calls it server-to-server.
+NOWPAYMENTS_IPN_CALLBACK_URL = env("NOWPAYMENTS_IPN_CALLBACK_URL", default="")
 
 DATABASES = {
     "default": {

@@ -2,14 +2,16 @@ from datetime import time, timedelta
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
+from django.test import override_settings
 from django.urls import reverse
 from django.utils import timezone
 from model_bakery import baker
 from rest_framework import status
 from rest_framework.test import APITestCase
 from rest_framework_simplejwt.tokens import RefreshToken
-
 from trader.models import Hook, HookSet, Telegram, Trade
+from billing.services import get_wallet
+
 
 User = get_user_model()
 
@@ -43,11 +45,27 @@ class HookSetViewSetTests(APITestCase):
         self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {refresh.access_token}")
 
     def test_list_hooksets(self):
-        """Test listing all hooksets."""
+        """Test listing hooksets returns only the caller's own."""
         response = self.client.get(self.list_url)
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(response.data), 2)
+        self.assertEqual(len(response.data), 1)
+        self.assertEqual(response.data[0]["id"], self.hookset.pk)
+
+    def test_cannot_retrieve_another_users_hookset(self):
+        """Another user's hookset must be invisible, not merely uneditable."""
+        url = reverse("trader:hookset-detail", kwargs={"pk": self.other_hookset.pk})
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_cannot_delete_another_users_hookset(self):
+        """Test that deleting someone else's hookset is not possible."""
+        url = reverse("trader:hookset-detail", kwargs={"pk": self.other_hookset.pk})
+        response = self.client.delete(url)
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertTrue(HookSet.objects.filter(pk=self.other_hookset.pk).exists())
 
     def test_list_hooksets_unauthenticated(self):
         """Test listing hooksets requires authentication."""
@@ -420,6 +438,295 @@ class HookTriggerAlertTests(APITestCase):
             # A fresh full round alerts again
             self.trigger(self.hook2)
             self.assertEqual(send.call_count, 2)
+
+
+@override_settings(FREE_EXECUTION_QUOTA=3)
+class HookSetCreationPaywallTests(APITestCase):
+    """Tests that a strategy cannot be created without credits behind it."""
+
+    def setUp(self):
+        self.user = baker.make(User)
+        refresh = RefreshToken.for_user(self.user)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {refresh.access_token}")
+        self.telegram = baker.make(Telegram, created_by=self.user)
+        self.list_url = reverse("trader:hookset-list")
+
+    def payload(self, name="New strategy"):
+        return {
+            "name": name,
+            "timewindow": "01:00:00",
+            "telegram_ids": [self.telegram.id],
+        }
+
+    def test_create_allowed_while_free_quota_remains(self):
+        """Test a fresh account can create a strategy."""
+        response = self.client.post(self.list_url, self.payload(), format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+    def test_create_blocked_once_free_quota_and_credits_are_gone(self):
+        """Test an empty wallet gets 402 instead of an unusable strategy."""
+        wallet = get_wallet(self.user)
+        wallet.free_executions_used = 3
+        wallet.save()
+
+        response = self.client.post(self.list_url, self.payload(), format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_402_PAYMENT_REQUIRED)
+        self.assertFalse(HookSet.objects.filter(created_by=self.user).exists())
+
+    def test_create_allowed_again_after_a_top_up(self):
+        """Test buying credits restores the ability to create strategies."""
+        wallet = get_wallet(self.user)
+        wallet.free_executions_used = 3
+        wallet.save()
+        self.assertEqual(
+            self.client.post(self.list_url, self.payload(), format="json").status_code,
+            status.HTTP_402_PAYMENT_REQUIRED,
+        )
+
+        wallet.balance = 10
+        wallet.save()
+
+        response = self.client.post(self.list_url, self.payload(), format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+    def test_existing_strategy_stays_editable_without_credits(self):
+        """Test the paywall gates creation only — existing work is not locked."""
+        hookset = baker.make(
+            HookSet, created_by=self.user, timewindow=DEFAULT_TIMEWINDOW
+        )
+        wallet = get_wallet(self.user)
+        wallet.free_executions_used = 3
+        wallet.save()
+
+        response = self.client.patch(
+            reverse("trader:hookset-detail", kwargs={"pk": hookset.pk}),
+            {"name": "Renamed"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+
+@override_settings(FREE_EXECUTION_QUOTA=1)
+class HookTriggerCreditTests(APITestCase):
+    """Tests that a completed hookset is billed one execution credit."""
+
+    def setUp(self):
+        self.user = baker.make(User)
+        self.hookset = baker.make(
+            HookSet, timewindow=DEFAULT_TIMEWINDOW, created_by=self.user
+        )
+        self.telegram = baker.make(Telegram, created_by=self.user)
+        self.hookset.set_notification_channels([self.telegram])
+        self.hook1 = baker.make(
+            Hook, hookset=self.hookset, created_by=self.user, is_triggered=False
+        )
+        self.hook2 = baker.make(
+            Hook, hookset=self.hookset, created_by=self.user, is_triggered=False
+        )
+
+    def complete_set(self):
+        for hook in (self.hook1, self.hook2):
+            url = reverse("trader:hook-trigger", kwargs={"uuid": hook.uuid})
+            response = self.client.post(url, {})
+        return response
+
+    def test_execution_spends_the_free_quota_first(self):
+        """Test the first execution is free and leaves the paid balance alone."""
+        wallet = get_wallet(self.user)
+        wallet.balance = 2
+        wallet.save()
+
+        with patch.object(Telegram, "send") as send:
+            response = self.complete_set()
+
+        send.assert_called_once()
+        self.assertTrue(response.data["executed"])
+        wallet.refresh_from_db()
+        self.assertEqual(wallet.free_executions_used, 1)
+        self.assertEqual(wallet.balance, 2)
+
+    def test_execution_spends_a_credit_once_free_quota_is_gone(self):
+        """Test the second execution debits the paid balance."""
+        wallet = get_wallet(self.user)
+        wallet.balance = 2
+        wallet.free_executions_used = 1
+        wallet.save()
+
+        with patch.object(Telegram, "send") as send:
+            self.complete_set()
+
+        send.assert_called_once()
+        wallet.refresh_from_db()
+        self.assertEqual(wallet.balance, 1)
+
+    def test_no_alert_is_sent_when_the_owner_is_out_of_credits(self):
+        """Test an unfunded account completes the set but sends nothing."""
+        wallet = get_wallet(self.user)
+        wallet.free_executions_used = 1
+        wallet.save()
+
+        with patch.object(Telegram, "send") as send, self.assertLogs(
+            "trader.views", level="WARNING"
+        ) as logs:
+            response = self.complete_set()
+
+        send.assert_not_called()
+        self.assertIn("no credits left", logs.output[0])
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertFalse(response.data["executed"])
+        self.assertEqual(response.data["reason"], "insufficient_credits")
+
+    def test_incomplete_set_is_not_billed(self):
+        """Test a partial set costs nothing — only a completed one is an execution."""
+        url = reverse("trader:hook-trigger", kwargs={"uuid": self.hook1.uuid})
+
+        with patch.object(Telegram, "send") as send:
+            response = self.client.post(url, {})
+
+        send.assert_not_called()
+        self.assertFalse(response.data["executed"])
+        wallet = get_wallet(self.user)
+        self.assertEqual(wallet.free_executions_used, 0)
+
+    def test_the_hookset_owner_is_billed_not_the_caller(self):
+        """Test the unauthenticated caller does not shift the cost elsewhere."""
+        other_user = baker.make(User)
+        other_wallet = get_wallet(other_user)
+
+        with patch.object(Telegram, "send"):
+            self.complete_set()
+
+        other_wallet.refresh_from_db()
+        self.assertEqual(other_wallet.free_executions_used, 0)
+        self.assertEqual(get_wallet(self.user).free_executions_used, 1)
+
+
+class CrossUserAttachmentTests(APITestCase):
+    """Tests that a user cannot attach anything to another user's resources.
+
+    The ViewSets' get_queryset() only scopes lookups; an id passed as a related
+    field on write needs scoping of its own. Left open, a user could add a hook
+    to someone else's hookset — which both spends that owner's credits and, with
+    a hook the owner can never see or delete, wedges their strategy so it never
+    completes again.
+    """
+
+    def setUp(self):
+        self.attacker = baker.make(User)
+        self.victim = baker.make(User)
+        refresh = RefreshToken.for_user(self.attacker)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {refresh.access_token}")
+
+        self.victim_hookset = baker.make(
+            HookSet, created_by=self.victim, timewindow=DEFAULT_TIMEWINDOW
+        )
+        self.victim_telegram = baker.make(Telegram, created_by=self.victim)
+        self.own_hookset = baker.make(
+            HookSet, created_by=self.attacker, timewindow=DEFAULT_TIMEWINDOW
+        )
+        self.own_telegram = baker.make(Telegram, created_by=self.attacker)
+
+    def test_cannot_create_hook_on_another_users_hookset(self):
+        """Test a hook cannot be injected into someone else's strategy."""
+        response = self.client.post(
+            reverse("trader:hook-list"),
+            {"name": "injected", "hookset": self.victim_hookset.id},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertFalse(Hook.objects.filter(hookset=self.victim_hookset).exists())
+
+    def test_can_create_hook_on_own_hookset(self):
+        """Test the scoping does not block the legitimate case."""
+        response = self.client.post(
+            reverse("trader:hook-list"),
+            {"name": "mine", "hookset": self.own_hookset.id},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+    def test_cannot_move_own_hook_onto_another_users_hookset(self):
+        """Test an update cannot reparent a hook across owners."""
+        hook = baker.make(
+            Hook, hookset=self.own_hookset, created_by=self.attacker
+        )
+
+        response = self.client.patch(
+            reverse("trader:hook-detail", kwargs={"uuid": hook.uuid}),
+            {"hookset": self.victim_hookset.id},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        hook.refresh_from_db()
+        self.assertEqual(hook.hookset, self.own_hookset)
+
+    def test_cannot_create_trade_on_another_users_hookset(self):
+        """Test a trade cannot be attached to someone else's strategy."""
+        response = self.client.post(
+            reverse("trader:trade-list"),
+            {
+                "name": "injected",
+                "pair": "BTC/USDT",
+                "action": "LONG",
+                "hookset": self.victim_hookset.id,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertFalse(Trade.objects.filter(hookset=self.victim_hookset).exists())
+
+    def test_cannot_attach_another_users_telegram_to_own_hookset(self):
+        """Test alerts cannot be pointed at a chat belonging to someone else."""
+        response = self.client.post(
+            reverse("trader:hookset-list"),
+            {
+                "name": "attacker set",
+                "timewindow": "01:00:00",
+                "telegram_ids": [self.victim_telegram.id],
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_can_attach_own_telegram_to_own_hookset(self):
+        """Test the scoping does not block the legitimate case."""
+        response = self.client.post(
+            reverse("trader:hookset-list"),
+            {
+                "name": "attacker set",
+                "timewindow": "01:00:00",
+                "telegram_ids": [self.own_telegram.id],
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        hookset = HookSet.objects.get(pk=response.data["id"])
+        self.assertEqual(hookset.notification_targets.count(), 1)
+
+    def test_cannot_swap_in_another_users_telegram_on_update(self):
+        """Test an update cannot redirect alerts to someone else's chat."""
+        self.own_hookset.set_notification_channels([self.own_telegram])
+
+        response = self.client.patch(
+            reverse("trader:hookset-detail", kwargs={"pk": self.own_hookset.pk}),
+            {"telegram_ids": [self.victim_telegram.id]},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        targets = self.own_hookset.notification_targets.all()
+        self.assertEqual(targets.count(), 1)
+        self.assertEqual(targets.first().channel, self.own_telegram)
 
 
 class TradeViewSetTests(APITestCase):
