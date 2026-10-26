@@ -1,8 +1,8 @@
 import json
 import logging
-import urllib.error
 import urllib.request
 import uuid
+from dataclasses import dataclass
 from datetime import time
 
 from django.conf import settings
@@ -13,6 +13,10 @@ from django.db import models, transaction
 from django.utils import timezone
 
 logger = logging.getLogger(__name__)
+
+# TradingView fails a webhook it cannot get an answer to within 3 seconds and
+# does not retry, so an alert send must never eat the whole budget.
+TELEGRAM_SEND_TIMEOUT_SECONDS = 2
 
 # Create your models here.
 
@@ -36,6 +40,33 @@ class Hook(models.Model):
         self.is_triggered = True
         self.triggered_at = timezone.now()
         self.save()
+
+
+def _http_status_of(exc):
+    """The HTTP status an exception carries, or None.
+
+    `urllib.error.HTTPError` exposes `.code`; connection and timeout failures do
+    not. Validated rather than trusted because this runs inside `notify`'s
+    except block — a bad value reaching the DB insert would raise there and turn
+    a handled delivery failure into a 500.
+    """
+    code = getattr(exc, "code", None)
+    if isinstance(code, int) and 100 <= code <= 599:
+        return code
+    return None
+
+
+@dataclass(frozen=True)
+class DeliveryResult:
+    """Outcome of one `HookSet.notify()` fan-out.
+
+    Deliberately not truthiness-based: callers must read `.delivered`, because a
+    `(0 delivered, 2 channels)` result is a *failure* and a bare `if result:` on
+    a tuple or object would read as success and bill for an undelivered alert.
+    """
+
+    delivered: int
+    total: int
 
 
 class HookSet(models.Model):
@@ -69,10 +100,36 @@ class HookSet(models.Model):
         )
 
     def notify(self, message):
+        """Fan `message` out to every channel and report what got through.
+
+        One unreachable channel must not fail the response or stop the remaining
+        channels, so failures are isolated per channel. `delivered` is what the
+        caller bills on — a zero has to mean "nobody got the alert" — and each
+        target's outcome is recorded so the owner can see a channel has died.
+        """
+        delivered = 0
+        total = 0
         for target in self.notification_targets.select_related("content_type"):
             channel = target.channel
-            if channel is not None:
+            if channel is None:
+                continue
+            total += 1
+            try:
                 channel.send(message)
+            except Exception as exc:
+                logger.exception(
+                    "Notification channel %s failed for hookset %s", channel, self.uuid
+                )
+                NotificationTargetLog.objects.create(
+                    target=target,
+                    success=False,
+                    error=str(exc)[:255] or exc.__class__.__name__,
+                    status_code=_http_status_of(exc),
+                )
+            else:
+                delivered += 1
+                NotificationTargetLog.objects.create(target=target, success=True)
+        return DeliveryResult(delivered=delivered, total=total)
 
 
 class NotificationTarget(models.Model):
@@ -96,6 +153,43 @@ class NotificationTarget(models.Model):
 
     def __str__(self):
         return f"{self.hookset} -> {self.channel}"
+
+class NotificationTargetLog(models.Model):
+    """One delivery attempt on one notification target, successful or not.
+
+    A partial delivery still bills the owner for the execution — one credit buys
+    the execution, not one copy per channel — so a broken channel has to be
+    visible or they would keep paying full price for alerts half of which never
+    arrive.
+
+    Because successes are recorded too, health is simply "is the newest row a
+    success?" and recovery needs no separate resolution flag. Rows are ordered
+    newest-first, so the first entry is the channel's current state.
+    """
+
+    target = models.ForeignKey(
+        NotificationTarget, on_delete=models.CASCADE, related_name="logs"
+    )
+    success = models.BooleanField()
+    error = models.CharField(max_length=255, blank=True)
+    # Null whenever no HTTP response was ever received — an unconfigured token,
+    # a refused connection or a read timeout all fail before a status exists —
+    # and on a success, since `send()` does not report the response code back.
+    # Populated for an HTTPError, where it is the most diagnostic field there
+    # is: 401 means a bad bot token, 403 the bot was blocked or kicked, 400 a
+    # bad chat_id, 429 rate limiting.
+    status_code = models.PositiveSmallIntegerField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+        indexes = [
+            models.Index(fields=["target", "-created_at"]),
+        ]
+
+    def __str__(self):
+        outcome = "ok" if self.success else f"failed: {self.error}"
+        return f"{self.target_id}: {outcome}"
 
 
 ACTION_CHOICES = [
@@ -186,19 +280,23 @@ class Telegram(models.Model):
         return self.name
 
     def send(self, message):
+        """Post `message` to this chat. Raises if it could not be delivered.
+
+        Failures must propagate rather than be swallowed here: `HookSet.notify`
+        counts a clean return as a delivery, and the owner is only charged for
+        alerts that actually went out. Catching and logging in this method made
+        every failure look like a success and billed for alerts nobody received.
+        `notify` is the one place that catches, logs and counts.
+        """
         token = settings.TELEGRAM_BOT_TOKEN
         if not token:
-            logger.warning(
-                "TELEGRAM_BOT_TOKEN is not configured; skipping alert to %s", self.name
+            raise RuntimeError(
+                f"TELEGRAM_BOT_TOKEN is not configured; cannot alert {self.name}"
             )
-            return
 
         url = f"https://api.telegram.org/bot{token}/sendMessage"
         body = json.dumps({"chat_id": self.chat_id, "text": message}).encode("utf-8")
         request = urllib.request.Request(
             url, data=body, headers={"Content-Type": "application/json"}
         )
-        try:
-            urllib.request.urlopen(request, timeout=10)
-        except urllib.error.URLError:
-            logger.exception("Failed to send Telegram alert to %s (%s)", self.name, self.chat_id)
+        urllib.request.urlopen(request, timeout=TELEGRAM_SEND_TIMEOUT_SECONDS)

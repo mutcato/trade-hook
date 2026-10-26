@@ -118,9 +118,10 @@ This pattern lets you add new channel types (Email, Slack) without migrating Hoo
 **Hook Triggering Logic**
 When a Hook is triggered:
 1. Mark it as triggered with a timestamp
-2. Check if all sibling hooks in the same HookSet are triggered and within the time window
-3. If all conditions met, bill one execution credit then notify all Telegram channels linked to that HookSet
-4. Reset the cycle either way, so an unpaid cycle cannot sit armed and fire on the next top-up
+2. Check if all sibling hooks in the same HookSet are executed and within the time window
+3. Reset the cycle first, so a delivery failure cannot leave the set armed for a retry
+4. If all conditions met, notify the HookSet's channels, then bill one credit — only if
+   at least one channel accepted the alert
 5. Time window is stored as a TimeField in HookSet (e.g., 1 hour)
 
 **Credit Metering**
@@ -128,9 +129,19 @@ A *completed HookSet* is the billable event — not an individual hook trigger.
 `billing.services.consume_execution` spends the free tier
 (`settings.FREE_EXECUTION_QUOTA`, default 3) before the paid balance, and the
 HookSet's `created_by` is charged rather than whoever called the public webhook.
-Out of credits means no alert is sent, but `/hooks/{uuid}/trigger/` still answers
-200 (`executed: false`, `reason: "insufficient_credits"`) — an error status would
-make external signal sources like TradingView disable the webhook.
+Delivery and billing are all-or-nothing: `HookSet.notify()` returns how many
+channels accepted the message, and a credit is spent only if that is non-zero.
+A hookset with no channels therefore costs nothing.
+
+`/hooks/{uuid}/trigger/` always answers 200, with `executed: false` plus a
+`reason` of `insufficient_credits` or `delivery_failed`. TradingView allows
+**3 seconds**, does not retry a timeout or 4xx (the signal is silently lost),
+and retries a 5xx three times — so an error status would either lose the signal
+or, when the set was left armed, re-bill the owner on each retry.
+
+For the same reason `Telegram.send` catches `OSError`, not `URLError`: a read
+timeout raises bare `TimeoutError`, which is not a `URLError` and used to escape
+as a 500. Its timeout is `TELEGRAM_SEND_TIMEOUT_SECONDS = 2`, inside the 3s budget.
 
 **Payment Callbacks**
 NOWPayments reports `confirmed` once the chain confirms but *before* the payout is
@@ -230,3 +241,19 @@ Follow the Karpathy behavioral guidelines in `.cursor/rules/karpathy-guidelines.
 - **Simplicity first**: No overengineering; only implement what's asked
 - **Surgical changes**: Only touch code directly related to the task; don't refactor unrelated code
 - **Goal-driven execution**: Define verifiable success criteria; loop until verified
+
+## Git Conventions
+
+**Commit messages must not contain double quotes.** They are pasted into
+`git commit -m "..."`, where an embedded `"` ends the shell string and breaks the
+command. Reach for the word instead of quoting it — write *the load-older
+control*, not the quoted label. The same reasoning rules out backticks, `$` and
+backslashes, which a double-quoted shell string would execute or swallow rather
+than print. Prefer `git commit -F <file>` for anything with a multi-paragraph
+body, so line breaks survive.
+
+Match the existing log style: a short imperative subject in sentence case, no
+trailing period, no conventional-commit prefix (see `Add billing`,
+`Handle partial payments`, `Remove duplicated buttons`). Add a body when the
+*why* is not readable from the diff — a money bug or a non-obvious ordering
+constraint deserves one; a rename does not.

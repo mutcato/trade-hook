@@ -6,18 +6,20 @@ from django.db.models import Q
 from django.utils import timezone
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
+from rest_framework.pagination import CursorPagination
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
 from billing.exceptions import InsufficientCredits
 from billing.services import consume_execution, has_available_executions
 
-from .models import Hook, HookSet, Telegram, Trade
+from .models import Hook, HookSet, NotificationTargetLog, Telegram, Trade
 from .serializers import (
     HookCreateUpdateSerializer,
     HookSerializer,
     HookSetCreateUpdateSerializer,
     HookSetSerializer,
+    NotificationTargetLogSerializer,
     TelegramCreateUpdateSerializer,
     TelegramSerializer,
     TradeCreateUpdateSerializer,
@@ -31,7 +33,11 @@ class HookSetViewSet(viewsets.ModelViewSet):
     queryset = HookSet.objects.all()
 
     def get_queryset(self):
-        return self.queryset.filter(created_by=self.request.user)
+        # The channel-health fields walk each target's logs, so prefetch
+        # them rather than paying a query per channel per hookset.
+        return self.queryset.filter(created_by=self.request.user).prefetch_related(
+            "notification_targets__logs"
+        )
 
     def perform_create(self, serializer):
         # A strategy with nothing left to pay for its executions could never
@@ -98,30 +104,90 @@ class HookViewSet(viewsets.ModelViewSet):
 
         if not invalid_sibling.exists():
             hookset = hook.hookset
-            result = consume_execution(hookset.created_by, hookset=hookset)
+            owner = hookset.created_by
 
-            if result.charged:
-                hookset.notify(f"{hookset.name} triggered.")
-                payload["executed"] = True
-            else:
-                # Stay on 200: the caller is an external signal source that would
-                # disable the webhook on an error status, and the account problem
-                # is the owner's to fix, not the caller's.
-                payload["reason"] = "insufficient_credits"
-                logger.warning(
-                    "HookSet %s completed but %s has no credits left; alert skipped",
-                    hookset.uuid,
-                    hookset.created_by,
-                )
-
-            # Clear the set either way so the next full round of signals starts a
-            # fresh cycle instead of re-alerting on every subsequent trigger — and
-            # so an unpaid cycle cannot sit armed and fire on the next top-up.
+            # Clear the set before delivering, not after. The next full round of
+            # signals must start a fresh cycle instead of re-alerting on every
+            # subsequent trigger, an unpaid cycle must not sit armed waiting for
+            # the next top-up, and — critically — a delivery failure must not
+            # leave the set armed: TradingView retries a 5xx three times, and
+            # each retry would re-complete the set.
             Hook.objects.filter(hookset=hookset).update(
                 is_triggered=False, triggered_at=None
             )
 
+            # Deliver first, bill second: a credit is only spent once an alert
+            # has actually reached somebody. Every branch answers 200 — a 4xx
+            # would make TradingView drop the signal with no retry and no
+            # report, so the owner would never learn anything went wrong.
+            if not has_available_executions(owner):
+                payload["reason"] = "insufficient_credits"
+                logger.warning(
+                    "HookSet %s completed but %s has no credits left; alert skipped",
+                    hookset.uuid,
+                    owner,
+                )
+            else:
+                delivery = hookset.notify(f"{hookset.name} executed.")
+                # Reported so a partial delivery is visible to whoever reads the
+                # response: one credit buys the execution, not one copy per
+                # channel, so delivered < channels still costs full price.
+                payload["delivered"] = delivery.delivered
+                payload["channels"] = delivery.total
+
+                # Read `.delivered`, not the result's truthiness: a
+                # (0 delivered, 2 channels) object would read as success and
+                # bill for an alert nobody received.
+                if not delivery.delivered:
+                    # Nothing reached any channel, so nothing is charged.
+                    payload["reason"] = "delivery_failed"
+                    logger.warning(
+                        "HookSet %s completed but no channel accepted the alert; "
+                        "%s was not charged",
+                        hookset.uuid,
+                        owner,
+                    )
+                else:
+                    consume_execution(owner, hookset=hookset)
+                    payload["executed"] = True
+
         return Response(payload, status=status.HTTP_200_OK)
+
+
+class NotificationLogPagination(CursorPagination):
+    """Cursor, not page number.
+
+    The log is append-only and ordered newest-first, so page numbers would drift
+    as new attempts arrive while the user is paging. Applied to this view only —
+    turning on global pagination would change every existing list endpoint from
+    a bare array to a wrapped object and break the frontend.
+    """
+
+    page_size = 25
+    ordering = "-created_at"
+
+
+class NotificationTargetLogViewSet(viewsets.ReadOnlyModelViewSet):
+    """The caller's own delivery attempts, newest first.
+
+    Scoped through the target to the hookset's owner — the log has no `user` of
+    its own, so this is what keeps one account's delivery history private.
+    """
+
+    serializer_class = NotificationTargetLogSerializer
+    pagination_class = NotificationLogPagination
+    queryset = NotificationTargetLog.objects.all()
+
+    def get_queryset(self):
+        queryset = self.queryset.filter(
+            target__hookset__created_by=self.request.user
+        ).select_related("target__hookset").prefetch_related("target__channel")
+
+        # `?success=false` is the diagnostic view: just the failures.
+        success = self.request.query_params.get("success")
+        if success is not None:
+            queryset = queryset.filter(success=success.lower() not in ("false", "0"))
+        return queryset
 
 
 class TradeViewSet(viewsets.ModelViewSet):
