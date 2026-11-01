@@ -53,7 +53,7 @@ class Command(BaseCommand):
     def _reply_with_chat_id(self, base_url, chat_id):
         text = (
             f"Your chat ID is: {chat_id}\n\n"
-            "Paste this into the Telegram destination form in AlphaBot to receive alerts here."
+            "Paste this into the Telegram destination form in NudgeWire to receive alerts here."
         )
         body = json.dumps({"chat_id": chat_id, "text": text}).encode("utf-8")
         request = urllib.request.Request(
