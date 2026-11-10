@@ -112,6 +112,11 @@ class NowPaymentsProvider:
             headers={
                 "Content-Type": "application/json",
                 "x-api-key": self.api_key,
+                # NOWPayments sits behind Cloudflare, which fingerprint-bans the
+                # default Python-urllib agent with a 403 and a bare
+                # `error code: 1010` body — before the request ever reaches the
+                # API. Any explicit agent gets through.
+                "User-Agent": "trade-hook/1.0",
             },
         )
         try:
