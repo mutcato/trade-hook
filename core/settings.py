@@ -126,6 +126,8 @@ NOWPAYMENTS_SANDBOX = env.bool("NOWPAYMENTS_SANDBOX", default=True)
 # Must be a publicly reachable URL — the provider calls it server-to-server.
 NOWPAYMENTS_IPN_CALLBACK_URL = env("NOWPAYMENTS_IPN_CALLBACK_URL", default="")
 
+TRADINGVIEW_REFERENCE_LINK = env("TRADINGVIEW_REFERENCE_LINK", default="")
+
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.postgresql",

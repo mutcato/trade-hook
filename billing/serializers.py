@@ -26,6 +26,7 @@ class WalletSerializer(serializers.ModelSerializer):
     free_executions_remaining = serializers.IntegerField(read_only=True)
     total_available = serializers.IntegerField(read_only=True)
     free_quota = serializers.SerializerMethodField()
+    tradingview_reference_link = serializers.SerializerMethodField()
 
     class Meta:
         model = Wallet
@@ -35,10 +36,15 @@ class WalletSerializer(serializers.ModelSerializer):
             "free_executions_remaining",
             "total_available",
             "free_quota",
+            "tradingview_reference_link",
         ]
 
     def get_free_quota(self, wallet):
         return settings.FREE_EXECUTION_QUOTA
+
+    def get_tradingview_reference_link(self, wallet):
+        """Affiliate link for the credits page; empty when unset, which hides it."""
+        return settings.TRADINGVIEW_REFERENCE_LINK
 
 
 class OrderSerializer(serializers.ModelSerializer):
