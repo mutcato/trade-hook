@@ -32,6 +32,11 @@ class CreditPackViewSet(viewsets.ReadOnlyModelViewSet):
         # The smallest pack is the list price every discount is measured against.
         baseline = min(packs, key=lambda pack: pack.credits) if packs else None
         context["baseline_unit_price"] = baseline.unit_price_usd if baseline else None
+        # Resolved once for the whole list rather than per pack, which would be
+        # one eligibility query per card.
+        context["first_purchase_discount"] = services.first_purchase_discount_percent(
+            self.request.user
+        )
         return context
 
 

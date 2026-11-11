@@ -85,6 +85,9 @@ class Order(models.Model):
     )
     credits = models.PositiveIntegerField()
     price_usd = models.DecimalField(max_digits=10, decimal_places=2)
+    # Percentage already taken off `price_usd`, snapshotted like the price so an
+    # audit can always tell why a top-up cost what it did.
+    discount_percent = models.PositiveSmallIntegerField(default=0)
     status = models.CharField(
         max_length=20, choices=Status.choices, default=Status.PENDING
     )

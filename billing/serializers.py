@@ -1,6 +1,7 @@
 from django.conf import settings
 from rest_framework import serializers
 
+from . import services
 from .models import CreditPack, LedgerEntry, Order, Wallet
 
 
@@ -9,10 +10,22 @@ class CreditPackSerializer(serializers.ModelSerializer):
         max_digits=10, decimal_places=4, read_only=True
     )
     discount_percent = serializers.SerializerMethodField()
+    # Null unless the caller is still eligible, so the client never has to work
+    # out who the offer applies to.
+    promo_price_usd = serializers.SerializerMethodField()
+    promo_discount_percent = serializers.SerializerMethodField()
 
     class Meta:
         model = CreditPack
-        fields = ["id", "credits", "price_usd", "unit_price_usd", "discount_percent"]
+        fields = [
+            "id",
+            "credits",
+            "price_usd",
+            "unit_price_usd",
+            "discount_percent",
+            "promo_price_usd",
+            "promo_discount_percent",
+        ]
 
     def get_discount_percent(self, pack):
         """Saving per credit against the smallest pack, which is the list price."""
@@ -20,6 +33,15 @@ class CreditPackSerializer(serializers.ModelSerializer):
         if not baseline or pack.unit_price_usd >= baseline:
             return 0
         return int(round((1 - pack.unit_price_usd / baseline) * 100))
+
+    def get_promo_discount_percent(self, pack):
+        return self.context.get("first_purchase_discount", 0)
+
+    def get_promo_price_usd(self, pack):
+        percent = self.context.get("first_purchase_discount", 0)
+        if not percent:
+            return None
+        return services.apply_discount(pack.price_usd, percent)
 
 
 class WalletSerializer(serializers.ModelSerializer):

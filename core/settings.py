@@ -118,6 +118,12 @@ FREE_EXECUTION_QUOTA = env.int("FREE_EXECUTION_QUOTA", default=3)
 BILLING_PARTIAL_PAYMENT_TOLERANCE = Decimal(
     env("BILLING_PARTIAL_PAYMENT_TOLERANCE", default="0.97")
 )
+# Percentage off a user's very first top-up. 0 ends the campaign without a
+# deploy. The discount is real: the struck-through price is what every later
+# top-up actually costs.
+BILLING_FIRST_PURCHASE_DISCOUNT_PERCENT = env.int(
+    "BILLING_FIRST_PURCHASE_DISCOUNT_PERCENT", default=0
+)
 # Where the provider sends the customer back after paying.
 FRONTEND_BASE_URL = env("FRONTEND_BASE_URL", default="http://127.0.0.1:5173")
 NOWPAYMENTS_API_KEY = env("NOWPAYMENTS_API_KEY", default="")

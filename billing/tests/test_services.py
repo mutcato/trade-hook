@@ -1,5 +1,6 @@
 from datetime import time
 from decimal import Decimal
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
@@ -482,3 +483,79 @@ class CreditPackTests(TestCase):
         pack = CreditPack.objects.get(credits=10)
         self.assertEqual(pack.price_usd, Decimal("8.45"))
         self.assertEqual(pack.unit_price_usd, Decimal("0.8450"))
+
+
+@override_settings(BILLING_FIRST_PURCHASE_DISCOUNT_PERCENT=50)
+class FirstPurchaseDiscountTests(TestCase):
+    """Tests the first top-up discount, which must apply once and only once."""
+
+    def setUp(self):
+        self.user = baker.make(User)
+        self.pack = CreditPack.objects.get(credits=10)
+
+    def credited_order(self, user, **kwargs):
+        return baker.make(
+            Order,
+            user=user,
+            credits=10,
+            price_usd=Decimal("4.23"),
+            credits_granted=10,
+            **kwargs,
+        )
+
+    def test_a_new_user_is_eligible(self):
+        """Test someone who has never been credited gets the campaign rate."""
+        self.assertEqual(services.first_purchase_discount_percent(self.user), 50)
+
+    def test_being_credited_ends_the_offer(self):
+        """Test the discount is spent by the first order that grants credits."""
+        self.credited_order(self.user)
+        self.assertEqual(services.first_purchase_discount_percent(self.user), 0)
+
+    def test_an_abandoned_order_does_not_burn_the_offer(self):
+        """Test opening an invoice and never paying leaves the user eligible.
+
+        Eligibility is judged on credits granted, not on orders created, so
+        clicking away from the provider's page does not cost the discount.
+        """
+        baker.make(
+            Order, user=self.user, credits=10, price_usd=Decimal("4.23"), credits_granted=0
+        )
+        self.assertEqual(services.first_purchase_discount_percent(self.user), 50)
+
+    def test_eligibility_is_per_user(self):
+        """Test another account's purchase does not consume this user's offer."""
+        self.credited_order(baker.make(User))
+        self.assertEqual(services.first_purchase_discount_percent(self.user), 50)
+
+    @override_settings(BILLING_FIRST_PURCHASE_DISCOUNT_PERCENT=0)
+    def test_zero_percent_ends_the_campaign(self):
+        """Test the campaign can be switched off without a deploy."""
+        self.assertEqual(services.first_purchase_discount_percent(self.user), 0)
+
+    def test_price_is_rounded_to_a_payable_cent(self):
+        """Test half of $8.45 becomes $4.23, not a fraction of a cent."""
+        self.assertEqual(services.apply_discount(Decimal("8.45"), 50), Decimal("4.23"))
+
+    def test_no_discount_leaves_the_price_exactly_alone(self):
+        """Test a zero percentage is not allowed to re-round the price."""
+        self.assertEqual(services.apply_discount(Decimal("8.45"), 0), Decimal("8.45"))
+
+    def test_create_order_snapshots_the_discounted_price(self):
+        """Test the invoice is opened for the reduced amount and records why."""
+        invoice = {"id": "inv-1", "invoice_url": "https://pay.example/1"}
+        with patch.object(NowPaymentsProvider, "create_invoice", return_value=invoice):
+            order = services.create_order(self.user, self.pack)
+
+        self.assertEqual(order.price_usd, Decimal("4.23"))
+        self.assertEqual(order.discount_percent, 50)
+
+    def test_the_next_order_is_full_price(self):
+        """Test a second top-up costs the list price once the first was credited."""
+        self.credited_order(self.user)
+        invoice = {"id": "inv-2", "invoice_url": "https://pay.example/2"}
+        with patch.object(NowPaymentsProvider, "create_invoice", return_value=invoice):
+            order = services.create_order(self.user, self.pack)
+
+        self.assertEqual(order.price_usd, Decimal("8.45"))
+        self.assertEqual(order.discount_percent, 0)

@@ -14,7 +14,7 @@ append-only ledger stay in one place. Three invariants matter:
 
 import logging
 from dataclasses import dataclass
-from decimal import ROUND_FLOOR, Decimal, InvalidOperation
+from decimal import ROUND_FLOOR, ROUND_HALF_UP, Decimal, InvalidOperation
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
@@ -85,6 +85,33 @@ def consume_execution(user, hookset=None):
         return ConsumeResult(True, "credit", wallet.total_available)
 
     return ConsumeResult(False, "none", 0)
+
+
+def first_purchase_discount_percent(user):
+    """Discount `user` is still entitled to on a top-up, or 0.
+
+    Eligibility is "has never had credits granted for an order" — an abandoned
+    or failed attempt must not burn the offer, and checking at grant time rather
+    than at order time means a user who clicks away is not locked out. The cost
+    of that choice is bounded: someone opening several invoices before paying
+    any of them could claim it more than once, which is a discount on real money
+    rather than a way to take anything.
+    """
+    percent = settings.BILLING_FIRST_PURCHASE_DISCOUNT_PERCENT
+    if percent <= 0:
+        return 0
+    if Order.objects.filter(user=user, credits_granted__gt=0).exists():
+        return 0
+    return percent
+
+
+def apply_discount(price_usd, percent):
+    """`price_usd` less `percent`, rounded to the cent. Never below zero."""
+    if percent <= 0:
+        return price_usd
+    percent = min(percent, 100)
+    net = Decimal(price_usd) * (Decimal(100) - Decimal(percent)) / Decimal(100)
+    return net.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
 def _as_decimal(value):
@@ -175,11 +202,16 @@ def create_order(user, pack, provider=None):
     """
     provider = provider or NowPaymentsProvider()
 
+    # Priced here, not from anything the client sent, so the invoice can only
+    # ever be opened for a discount the user is actually entitled to.
+    discount = first_purchase_discount_percent(user)
+
     order = Order(
         user=user,
         pack=pack,
         credits=pack.credits,
-        price_usd=pack.price_usd,
+        price_usd=apply_discount(pack.price_usd, discount),
+        discount_percent=discount,
         provider=provider.name,
     )
 
