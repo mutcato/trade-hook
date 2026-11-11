@@ -125,6 +125,10 @@ NOWPAYMENTS_IPN_SECRET = env("NOWPAYMENTS_IPN_SECRET", default="")
 NOWPAYMENTS_SANDBOX = env.bool("NOWPAYMENTS_SANDBOX", default=True)
 # Must be a publicly reachable URL — the provider calls it server-to-server.
 NOWPAYMENTS_IPN_CALLBACK_URL = env("NOWPAYMENTS_IPN_CALLBACK_URL", default="")
+# Locks the hosted invoice to one asset, e.g. `usdtsol` for USDT on Solana.
+# Empty lets the customer pick any coin the account accepts, which then has to be
+# converted into the payout wallet's currency.
+NOWPAYMENTS_PAY_CURRENCY = env("NOWPAYMENTS_PAY_CURRENCY", default="")
 
 TRADINGVIEW_REFERENCE_LINK = env("TRADINGVIEW_REFERENCE_LINK", default="")
 

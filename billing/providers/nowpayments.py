@@ -37,7 +37,7 @@ class NowPaymentsProvider:
     PENDING_STATUSES = frozenset({"waiting", "confirming", "confirmed", "sending"})
     FAILED_STATUSES = frozenset({"failed", "expired", "refunded"})
 
-    def __init__(self, api_key=None, ipn_secret=None, sandbox=None):
+    def __init__(self, api_key=None, ipn_secret=None, sandbox=None, pay_currency=None):
         self.api_key = (
             api_key if api_key is not None else settings.NOWPAYMENTS_API_KEY
         )
@@ -46,6 +46,11 @@ class NowPaymentsProvider:
         )
         self.sandbox = (
             sandbox if sandbox is not None else settings.NOWPAYMENTS_SANDBOX
+        )
+        self.pay_currency = (
+            pay_currency
+            if pay_currency is not None
+            else settings.NOWPAYMENTS_PAY_CURRENCY
         )
 
     @property
@@ -79,6 +84,10 @@ class NowPaymentsProvider:
             "success_url": success_url,
             "cancel_url": cancel_url,
         }
+        if self.pay_currency:
+            # Pins the asset chooser instead of letting it open on BTC. Only sent
+            # when configured, so the unset case keeps the pick-any-coin flow.
+            payload["pay_currency"] = self.pay_currency
         return self._request("/invoice", payload)
 
     def verify_ipn_signature(self, raw_body, signature):
