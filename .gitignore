@@ -60,6 +60,8 @@ cover/
 local_settings.py
 db.sqlite3
 db.sqlite3-journal
+# collectstatic output (STATIC_ROOT) — generated on the server, never committed.
+staticfiles/
 
 # Flask stuff:
 instance/
